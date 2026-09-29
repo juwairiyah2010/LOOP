@@ -1,93 +1,116 @@
-# LOOP (Leap Lounge)
+# LOOP — Love Opportunities
 
-**No more missed deadlines.**
-LOOP is a modern, personalized platform that aggregates internships, scholarships, fellowships, and competitions into a highly curated feed tailored specifically to your profile.
-
-With an intuitive swiping interface and smart match-scoring, LOOP ensures you only see the opportunities that matter most to you—and helps you track them so you never miss a deadline again.
+> **No more missed deadlines.**  
+> LOOP is a personalized opportunity discovery platform for students. It aggregates internships, scholarships, competitions, fellowships, and hackathons into one place and matches them to a user's profile.
 
 ---
 
 ## ✨ Features
 
-- **Personalized Opportunity Feed**: A curated list of internships, scholarships, fellowships, and competitions ranked by a "Match Score" based on your unique skills, interests, and professional field.
-- **Tinder-Style Swiping Interface**: Quickly triage opportunities by swiping right to show interest or swiping left to pass.
-- **AI-Powered Personalization**: Integrated with Google Gemini 2.5 Flash to generate highly relevant, realistic opportunities instantly based on your profile tokens.
-- **Automated Resume Parsing**: Upload your resume (PDF) to automatically extract your skills and professional field—no manual data entry required.
-- **Deadline Tracking & Watchlist**: Save opportunities to your Watchlist. Get real-time countdown timers, a unified calendar view, and active popup reminders for impending deadlines.
-- **Dynamic User Profiles**: Store your professional links (GitHub, LeetCode, Portfolio) and manage your custom skills and interests.
+- 🎯 **Personalized Opportunity Feed**: Dynamic match scoring based on skills, interests, and domain.
+- 🔎 **Search & Category Filtering**: Easily filter by opportunity type, location, stipend, and remote status.
+- 👆 **Tinder-Style Swiping**: Swipe right to express interest or left to pass.
+- ❤️ **Status Tracking**: Keep track of Saved, Interested, Passed, and Applied opportunities.
+- 📅 **Deadline Watchlist & Calendar**: Real-time countdowns and calendar visualization for upcoming deadlines.
+- 👤 **Student Profiles**: Manage resume links, portfolio, custom skills, and preferences.
+- 🤖 **Gemini-Powered Generation**: Instantly generate dynamic, realistic opportunities using Google Gemini 2.5 Flash.
+- 📄 **AI Resume PDF Analysis**: Extract key skills and fields directly from uploaded PDF resumes.
+- 🔐 **JWT Authentication**: Secure login, signup, and cookie-based session management.
+- 🗄️ **MongoDB & Fallback**: Seamless database integration with automatic local mock-data fallback.
 
 ---
 
-## 🛠 Tech Stack
-
-LOOP is built on a modern, high-performance web stack:
+## 🛠️ Tech Stack
 
 ### Frontend
-- **Framework**: [React 19](https://react.dev/)
-- **Routing & SSR**: [TanStack Start](https://tanstack.com/start) & [TanStack Router](https://tanstack.com/router)
-- **Data Fetching**: [TanStack Query](https://tanstack.com/query) (React Query)
-- **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
-- **Animations**: [Framer Motion](https://www.framer.com/motion/) (powering the fluid swipe cards and entry animations)
-- **UI Components**: [Radix UI](https://www.radix-ui.com/) (headless, accessible components) & [Lucide React](https://lucide.dev/) (icons)
+- **Core**: HTML5, Vanilla JavaScript (ES6+)
+- **Styling**: Custom CSS (`styles.css`), Tailwind CSS
+- **Icons**: Lucide Icons
 
 ### Backend & Database
-- **Database**: [MongoDB](https://www.mongodb.com/) (using native Node.js driver)
-- **Authentication**: Custom JWT-based authentication (`jsonwebtoken`, `bcrypt`)
-- **Server Engine**: Powered by Nitro (via TanStack Start)
+- **Server Engine**: Node.js & Express
+- **Database**: MongoDB (using Native Node.js Driver) with local JSON fallback
+- **Authentication**: JWT (`jsonwebtoken`) & `bcrypt`
+- **AI Integration**: Google GenAI SDK (`@google/genai`)
 
-### Integrations
-- **AI Integration**: [Google GenAI API](https://ai.google.dev/) (`@google/genai`) for personalized feed generation
-- **Email Notifications**: [Resend](https://resend.com/) for automated deadline reminders
+---
+
+## 📁 Project Structure
+
+```
+LOOP/
+├── frontend/
+│   ├── index.html
+│   ├── login.html
+│   ├── signup.html
+│   ├── opportunity.html
+│   ├── profile.html
+│   ├── saved.html
+│   ├── calendar.html
+│   ├── common.js
+│   └── styles.css
+│
+├── backend/
+│   └── server/
+│       ├── app.js
+│       ├── db.js
+│       ├── gemini.server.js
+│       └── mock-opportunities.js
+│
+├── package.json
+├── package-lock.json
+├── vercel.json
+└── README.md
+```
 
 ---
 
 ## 🚀 Getting Started
 
-### Prerequisites
-- Node.js (v20+ recommended)
-- MongoDB instance (local or Atlas)
-- Google Gemini API Key
+### 1. Install Dependencies
+```bash
+npm install
+```
 
-### Installation
+### 2. Configure Environment Variables (`.env`)
+Create a `.env` file in the root directory:
+```env
+MONGODB_URI=your_mongodb_uri
+DATABASE_NAME=leap_lounge
+JWT_SECRET=your_jwt_secret
+GEMINI_API_KEY=your_gemini_api_key
+PORT=8080
+NODE_ENV=development
+```
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/your-username/leap-lounge.git
-   cd leap-lounge
-   ```
+### 3. Start Server
+- **Development mode** (with auto-reload):
+  ```bash
+  npm run dev
+  ```
+- **Production mode**:
+  ```bash
+  npm start
+  ```
 
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Environment Setup:**
-   Create a `.env` file in the root directory and add the following variables:
-   ```env
-   MONGODB_URI=your_mongodb_connection_string
-   JWT_SECRET=your_jwt_secret
-   GEMINI_API_KEY=your_gemini_api_key
-   RESEND_API_KEY=your_resend_api_key
-   ```
-
-4. **Run the development server:**
-   ```bash
-   npm run dev
-   ```
-
-5. **Open the app:**
-   Navigate to [http://localhost:3000](http://localhost:3000) in your browser.
+Open [http://localhost:8080](http://localhost:8080) in your browser.
 
 ---
 
-## 📅 Scripts
+## 📜 Available Scripts
 
-- `npm run dev`: Starts the development server using Vite.
-- `npm run build`: Builds the app for production.
-- `npm run lint`: Runs ESLint to check for code issues.
-- `npm run format`: Formats the code using Prettier.
-- `npm run cron:reminders`: Executes the deadline reminder script (ideal for cron jobs).
+- `npm run dev`: Runs the backend server with Node.js native watch mode (`node --watch backend/server/app.js`).
+- `npm start`: Starts the Express backend server (`node backend/server/app.js`).
+- `npm run lint`: Runs ESLint to check for code quality issues.
+- `npm run format`: Formats code across the workspace using Prettier.
 
 ---
 
-*Designed and built to help you land your next big leap.*
+## 🔌 Main API Routes
+
+- `/api/auth/*` — User authentication (`/signup`, `/login`, `/me`, `/logout`)
+- `/api/user/*` — User profile, preferences, resume parsing, saved opportunities
+- `/api/feed/init` — Initialized opportunity feed with match scores
+- `/api/opportunities/*` — Search, filter, fetch details, update opportunity statuses
+- `/api/gemini/*` — AI-powered feed generation & PDF resume parsing
+- `/api/master/*` — Master list of skills & interests
