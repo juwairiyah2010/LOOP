@@ -6,16 +6,27 @@ import path from "path";
 import { mockOpportunities } from "./mock-opportunities.js";
 
 function sanitizeMongoUri(uri) {
+  // If the URI already has exactly 1 @ after the protocol, it's already valid —
+  // skip re-encoding to avoid double-encoding %40 → %2540.
   try {
     if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
       return uri;
     }
-    const match = uri.match(/^(mongodb(?:\+srv)?:\/\/)([^:]+):(.*)@([^/]+)(.*)$/);
-    if (!match) return uri;
-    const [_, scheme, username, password, host, rest] = match;
-    const encodedUser = encodeURIComponent(username);
-    const encodedPass = encodeURIComponent(password);
-    return `${scheme}${encodedUser}:${encodedPass}@${host}${rest}`;
+    const proto = uri.startsWith("mongodb+srv://") ? "mongodb+srv://" : "mongodb://";
+    const afterProto = uri.slice(proto.length);
+    const atCount = (afterProto.match(/@/g) || []).length;
+    if (atCount === 1) {
+      // Already correctly formatted — return as-is
+      return uri;
+    }
+    // Multiple @ signs: re-encode the password (split on last @)
+    const lastAt = afterProto.lastIndexOf("@");
+    const credsPart = afterProto.slice(0, lastAt);
+    const hostPart  = afterProto.slice(lastAt + 1);
+    const colon = credsPart.indexOf(":");
+    const username = credsPart.slice(0, colon);
+    const password = credsPart.slice(colon + 1);
+    return `${proto}${encodeURIComponent(username)}:${encodeURIComponent(password)}@${hostPart}`;
   } catch (err) {
     console.error("Failed to sanitize MONGODB_URI:", err);
     return uri;
@@ -114,15 +125,33 @@ function matchQuery(item, query) {
         });
       });
       if (!matched) return false;
+    } else if (key === "$text") {
+      // Simulate Atlas $text search in MockCollection via substring match
+      const searchTerms = (val.$search || "").toLowerCase().split(/\s+/).filter(Boolean);
+      const haystack = [
+        item.title, item.organization, item.description,
+        ...(Array.isArray(item.tags) ? item.tags : [])
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (!searchTerms.every(term => haystack.includes(term))) return false;
     } else if (key === "_id") {
       if (String(item._id) !== String(val)) return false;
     } else if (val && typeof val === "object") {
       const entryVal = item[key];
-      if (val.$gte) {
+      if (val.$gte !== undefined) {
         if (entryVal < val.$gte) return false;
       }
-      if (val.$lte) {
+      if (val.$lte !== undefined) {
         if (entryVal > val.$lte) return false;
+      }
+      if (val.$ne !== undefined) {
+        if (entryVal === val.$ne) return false;
+      }
+      if (val.$in !== undefined) {
+        if (!val.$in.includes(entryVal)) return false;
+      }
+      if (val.$exists !== undefined) {
+        const exists = key in item;
+        if (val.$exists !== exists) return false;
       }
     } else {
       if (Array.isArray(item[key])) {

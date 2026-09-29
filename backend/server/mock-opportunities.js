@@ -12,7 +12,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
     participants: 120,
     featured: true,
-    prize_amount: null
+    prize_amount: null,
+    work_mode: "hybrid",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_2",
@@ -27,7 +31,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
     participants: 45,
     featured: false,
-    prize_amount: "$5,000"
+    prize_amount: "$5,000",
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_3",
@@ -42,7 +50,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
     participants: 280,
     featured: true,
-    prize_amount: "$50,000"
+    prize_amount: "$50,000",
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_4",
@@ -57,7 +69,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
     participants: 90,
     featured: false,
-    prize_amount: "$10,000"
+    prize_amount: "$10,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_5",
@@ -72,7 +88,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 10).toISOString(),
     participants: 35,
     featured: false,
-    prize_amount: "$45,000"
+    prize_amount: "$45,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_6",
@@ -87,7 +107,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 4).toISOString(),
     participants: 150,
     featured: false,
-    prize_amount: null
+    prize_amount: null,
+    work_mode: "hybrid",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_7",
@@ -102,7 +126,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 1).toISOString(),
     participants: 320,
     featured: true,
-    prize_amount: "$2,000"
+    prize_amount: "$2,000",
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_8",
@@ -117,7 +145,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
     participants: 410,
     featured: true,
-    prize_amount: "$5,000"
+    prize_amount: "$5,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_9",
@@ -132,7 +164,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 15).toISOString(),
     participants: 75,
     featured: false,
-    prize_amount: "$100,000"
+    prize_amount: "$100,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_10",
@@ -147,7 +183,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 8).toISOString(),
     participants: 60,
     featured: false,
-    prize_amount: "$30,000"
+    prize_amount: "$30,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_11",
@@ -162,7 +202,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 9).toISOString(),
     participants: 85,
     featured: false,
-    prize_amount: null
+    prize_amount: null,
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_12",
@@ -177,7 +221,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 12).toISOString(),
     participants: 140,
     featured: false,
-    prize_amount: "$8,000"
+    prize_amount: "$8,000",
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_13",
@@ -192,7 +240,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 6).toISOString(),
     participants: 195,
     featured: false,
-    prize_amount: "$15,000"
+    prize_amount: "$15,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_14",
@@ -207,7 +259,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
     participants: 230,
     featured: false,
-    prize_amount: "$25,000"
+    prize_amount: "$25,000",
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_15",
@@ -222,7 +278,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 20).toISOString(),
     participants: 28,
     featured: false,
-    prize_amount: "$50,000"
+    prize_amount: "$50,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_16",
@@ -237,7 +297,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 11).toISOString(),
     participants: 95,
     featured: false,
-    prize_amount: null
+    prize_amount: null,
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_17",
@@ -252,7 +316,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 14).toISOString(),
     participants: 67,
     featured: false,
-    prize_amount: "$3,000"
+    prize_amount: "$3,000",
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_18",
@@ -267,7 +335,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
     participants: 180,
     featured: false,
-    prize_amount: "$15,000"
+    prize_amount: "$15,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_19",
@@ -282,7 +354,11 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 22).toISOString(),
     participants: 55,
     featured: false,
-    prize_amount: "$20,000"
+    prize_amount: "$20,000",
+    work_mode: "hybrid",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   },
   {
     id: "opp_20",
@@ -297,6 +373,10 @@ export const mockOpportunities = [
     posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 13).toISOString(),
     participants: 45,
     featured: false,
-    prize_amount: "$40,000"
+    prize_amount: "$40,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   }
 ];

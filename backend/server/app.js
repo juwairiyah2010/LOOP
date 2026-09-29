@@ -318,9 +318,15 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
 
     const now = new Date().toISOString();
 
+    // Pagination support — page=1 by default, max 100 per page
+    const page  = Math.max(1, parseInt(req.query.page  || "1", 10));
+    const limit = Math.min(100, Math.max(10, parseInt(req.query.limit || "50", 10)));
+    const skip  = (page - 1) * limit;
+
     // Build aggregate pipeline with match scoring + descending sort
+    // active: { $ne: false } hides archived/deleted opportunities
     const pipeline = [
-      { $match: { deadline: { $gte: now } } }
+      { $match: { deadline: { $gte: now }, active: { $ne: false } } }
     ];
 
     if (profileTokens.length > 0) {
@@ -360,7 +366,8 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
       pipeline.push({ $sort: { deadline: 1 } });
     }
 
-    pipeline.push({ $limit: 50 }); // load more so swipe stack stays full
+    if (skip > 0) pipeline.push({ $skip: skip });
+    pipeline.push({ $limit: limit }); // paginated — default 50, max 100
     pipeline.push({
       $project: {
         id: 1, _id: 1, title: 1, organization: 1, category: 1,
@@ -432,11 +439,25 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
 app.get("/api/ping", (req, res) => res.json({ ok: true, ts: Date.now() }));
 
 
+// Allowed profile fields — whitelist prevents arbitrary DB field injection
+const ALLOWED_PROFILE_FIELDS = new Set([
+  "name", "field", "bio", "university", "year_of_study",
+  "goal", "future_you", "email", "portfolio_url", "github_url",
+  "leetcode_url", "avatar", "interests", "skills",
+  "categories", "preferred_locations"
+]);
+
 // Update Profile
 app.post("/api/user/profile", requireAuth, async (req, res) => {
   try {
     const { users } = await getDbUser(req.user.userId);
     const data = req.body;
+
+    // Reject any key not in the whitelist
+    const rejected = Object.keys(data).filter(k => !ALLOWED_PROFILE_FIELDS.has(k));
+    if (rejected.length > 0) {
+      return res.status(400).json({ error: `Unknown profile fields: ${rejected.join(", ")}` });
+    }
 
     const updateQuery = Object.keys(data).reduce((acc, key) => {
       acc[`profile.${key}`] = data[key];
@@ -444,7 +465,7 @@ app.post("/api/user/profile", requireAuth, async (req, res) => {
     }, {});
 
     await users.updateOne(
-      { _id: toObjectId(req.user.userId) }, 
+      { _id: toObjectId(req.user.userId) },
       { $set: updateQuery }
     );
     return res.json({ success: true });
@@ -560,15 +581,14 @@ app.post("/api/opportunities", async (req, res) => {
     if (filters.category && filters.category !== "all") match.category = filters.category;
     if (filters.tag) match.tags = filters.tag;
     if (filters.q) {
-      match.$or = [
-        { title: { $regex: filters.q, $options: "i" } },
-        { organization: { $regex: filters.q, $options: "i" } },
-        { tags: { $regex: filters.q, $options: "i" } }
-      ];
+      // Atlas full-text index on title + organization + tags (search_text_idx)
+      // Falls back gracefully: MockCollection ignores $text and returns all
+      match.$text = { $search: filters.q };
     }
 
-    // Only show future opportunities
+    // Only show active, future opportunities
     match.deadline = { $gte: new Date().toISOString() };
+    match.active   = { $ne: false };
 
     if (Object.keys(match).length > 0) {
       pipeline.push({ $match: match });
