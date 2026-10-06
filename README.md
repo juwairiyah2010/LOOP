@@ -64,11 +64,12 @@ LOOP/
 │   ├── common.js
 │   └── styles.css
 │
-└── server/
-    ├── app.js
-    ├── db.js
-    ├── gemini.server.js
-    └── mock-opportunities.js
+└── backend/
+    └── server/
+        ├── app.js
+        ├── db.js
+        ├── gemini.server.js
+        └── mock-opportunities.js
 
 🚀 Run Locally
 
