@@ -196,7 +196,7 @@ app.post("/api/auth/reset/verify", async (req, res) => {
       { _id: user._id },
       { $set: { resetCode: code, resetCodeExpires: expiresAt } }
     );
-    return res.json({ success: true, code, message: "Identity verified" });
+    return res.json({ success: true, message: "Identity verified. Security reset code issued." });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
