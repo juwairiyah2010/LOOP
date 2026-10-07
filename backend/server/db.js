@@ -1,3 +1,4 @@
+import { computeQualityScore } from "./ingestion/quality.js";
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 import { MongoClient, ObjectId } from "mongodb";
@@ -498,19 +499,35 @@ export function formatOpportunity(doc) {
   if (!doc) return null;
   const canonicalId = doc.id ? String(doc.id) : (doc._id ? String(doc._id) : Math.random().toString(36).substring(2, 15));
   const now = new Date().toISOString();
+  const qualityScore = computeQualityScore(doc);
+
   const formatted = {
     ...doc,
     id: canonicalId,
     source: doc.source || "legacy",
     source_id: doc.source_id || null,
     source_url: doc.source_url || doc.apply_url || null,
+    apply_url: doc.apply_url || doc.source_url || null,
     first_seen_at: doc.first_seen_at || doc.posted_at || now,
     last_seen_at: doc.last_seen_at || now,
     last_verified_at: doc.last_verified_at || now,
     content_hash: doc.content_hash || null,
     is_active: doc.is_active !== undefined ? doc.is_active : (doc.active !== false),
-    active: doc.active !== undefined ? doc.active : (doc.is_active !== false)
+    active: doc.active !== undefined ? doc.active : (doc.is_active !== false),
+    verified: !!doc.verified,
+    qualityScore,
+    provenance: {
+      source: doc.source || "legacy",
+      source_id: doc.source_id || null,
+      original_url: doc.source_url || doc.apply_url || null,
+      apply_url: doc.apply_url || doc.source_url || null,
+      verified: !!doc.verified,
+      last_verified_at: doc.last_verified_at || now,
+      first_seen_at: doc.first_seen_at || doc.posted_at || now,
+      qualityScore
+    }
   };
+
   if (doc._id) {
     formatted._id = String(doc._id);
   } else {

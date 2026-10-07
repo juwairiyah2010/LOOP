@@ -474,7 +474,7 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
         location: 1, deadline: 1, tags: 1, prize_amount: 1,
         work_mode: 1, verified: 1, featured: 1, description: 1,
         apply_url: 1, participants: 1, application_start_date: 1,
-        posted_at: 1, matchScore: 1
+        posted_at: 1, matchScore: 1, qualityScore: 1, source: 1, source_id: 1, source_url: 1, first_seen_at: 1, last_seen_at: 1, last_verified_at: 1
       }
     });
 
