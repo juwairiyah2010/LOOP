@@ -426,6 +426,215 @@ export class DeterministicMatchingEngine {
 
     const allReasons = [...topReasons, ...reasons];
 
+    // -------------------------------------------------------------
+    // EXPLAINABILITY: "WHY THIS MATCHES" (Stored profile & opp data only)
+    // -------------------------------------------------------------
+    // 1. Skills summary
+    let skillsSummary = "";
+    if (targetSkills.length > 0) {
+      if (matchedSkills.length === targetSkills.length) {
+        skillsSummary = `All ${targetSkills.length} required skills matched (${matchedSkills.join(", ")})`;
+      } else if (matchedSkills.length > 0) {
+        skillsSummary = `Matched ${matchedSkills.length} of ${targetSkills.length} skills (${matchedSkills.join(", ")})`;
+        if (missingSkills.length > 0) {
+          skillsSummary += ` · Missing: ${missingSkills.join(", ")}`;
+        }
+      } else {
+        skillsSummary = `Missing required skills (${missingSkills.join(", ")})`;
+      }
+    } else if (userSkills.length > 0) {
+      skillsSummary = "No strict skill prerequisites listed · Open to your background";
+    } else {
+      skillsSummary = "No skills listed on profile · Open to all backgrounds";
+    }
+
+    // 2. Interests summary
+    let interestsSummary = "";
+    if (matchedInterests.length > 0) {
+      interestsSummary = `Direct alignment with your focus on ${matchedInterests.join(", ")}`;
+    } else if (interestSources.length > 0) {
+      interestsSummary = `Exploratory topic outside your primary interests (${interestSources.slice(0, 3).join(", ")})`;
+    } else {
+      interestsSummary = "General match · No specific interests set in profile";
+    }
+
+    // 3. Eligibility summary
+    let eligibilitySummary = "";
+    if (!isEligible) {
+      eligibilitySummary = `Ineligible: ${eligibilityResult.blockers.join("; ")}`;
+    } else if (eligibilityResult.eligible === "UNKNOWN") {
+      eligibilitySummary = `Conditional: Verification recommended (${eligibilityResult.warnings.join("; ") || "unverified attributes"})`;
+    } else {
+      const criteriaPassed = eligibilityResult.reasons?.length > 0
+        ? eligibilityResult.reasons.slice(0, 2).join("; ")
+        : "All criteria passed (degree, academic status, GPA)";
+      eligibilitySummary = `Eligible: Satisfies all criteria (${criteriaPassed})`;
+    }
+
+    // 4. Location & Mode summary
+    let locationSummary = "";
+    if (isRemote) {
+      locationSummary = `Remote: Available worldwide from anywhere`;
+    } else if (userPreferredLocs.length > 0 || userCountry) {
+      const allLocs = [userCountry, ...userPreferredLocs].filter(Boolean);
+      const locMatch = allLocs.some(loc => oppLocation.includes(loc) || loc.includes(oppLocation));
+      if (locMatch) {
+        locationSummary = `Location match: Matches your preferred location (${opp.location})`;
+      } else if (workMode === "hybrid") {
+        locationSummary = `Hybrid in ${opp.location}: Partial on-site presence required`;
+      } else {
+        locationSummary = `Onsite in ${opp.location} (outside preferred locations: ${allLocs.join(", ")})`;
+      }
+    } else {
+      locationSummary = `Location: ${opp.location || "Flexible / Unspecified"}`;
+    }
+
+    // 5. Deadline urgency summary
+    let urgencySummary = "";
+    let urgencyLevel = "Rolling";
+    let diffDays = null;
+    if (opp.deadline) {
+      const deadlineDate = new Date(opp.deadline);
+      const diffMs = deadlineDate.getTime() - now.getTime();
+      diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDays < 0) {
+        urgencyLevel = "Closed";
+        urgencySummary = `Deadline passed (${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"} ago)`;
+      } else if (diffDays === 0) {
+        urgencyLevel = "Closes today";
+        urgencySummary = "Closes today! Immediate action required";
+      } else if (diffDays <= 3) {
+        urgencyLevel = "High urgency";
+        urgencySummary = `Closes in ${diffDays} day${diffDays === 1 ? "" : "s"} (high urgency)`;
+      } else if (diffDays <= 7) {
+        urgencyLevel = "Closing this week";
+        urgencySummary = `Closes this week (${diffDays} days left)`;
+      } else if (diffDays <= 21) {
+        urgencyLevel = "Active window";
+        urgencySummary = `Active application window (${diffDays} days left)`;
+      } else {
+        urgencyLevel = "Open";
+        urgencySummary = `Open with ample time (${diffDays} days left)`;
+      }
+    } else {
+      urgencyLevel = "Rolling";
+      urgencySummary = "Rolling deadline with no fixed cut-off";
+    }
+
+    // 6. Relevant behavior summary
+    let behaviorType = "neutral";
+    let behaviorLabel = "Profile match";
+    let behaviorSummary = "";
+    if (oppId && appliedIds.includes(oppId)) {
+      behaviorType = "applied";
+      behaviorLabel = "Already applied";
+      behaviorSummary = "You already submitted an application to this listing";
+    } else if (oppId && (savedIds.includes(oppId) || interestedIds.includes(oppId))) {
+      behaviorType = "saved";
+      behaviorLabel = "Saved watchlist";
+      behaviorSummary = "Currently saved in your watchlist/interested list";
+    } else if (oppId && passedIds.includes(oppId)) {
+      behaviorType = "passed";
+      behaviorLabel = "Previously passed";
+      behaviorSummary = "Previously dismissed in your feed";
+    } else {
+      const totalInteractions = savedIds.length + interestedIds.length;
+      if (totalInteractions > 0) {
+        behaviorType = "engaged";
+        behaviorLabel = "Active interest";
+        behaviorSummary = `Recommended based on your activity across ${opp.category || "relevant"} opportunities`;
+      } else {
+        behaviorType = "neutral";
+        behaviorLabel = "Profile recommendation";
+        behaviorSummary = "First-time recommendation based on stored profile criteria (no prior interaction)";
+      }
+    }
+
+    const whyThisMatches = {
+      matchPercentage: finalMatchScore,
+      matchedSkills,
+      matchedInterests,
+      missingSkills,
+      skillsSummary,
+      interestsSummary,
+      eligibility: {
+        status: eligibilityResult.eligible,
+        isEligible,
+        summary: eligibilitySummary,
+        blockers: eligibilityResult.blockers || [],
+        warnings: eligibilityResult.warnings || [],
+        confidence: eligibilityResult.confidence
+      },
+      locationMode: {
+        workMode: opp.work_mode || (isRemote ? "remote" : "onsite"),
+        location: opp.location || "Unspecified",
+        isRemote,
+        summary: locationSummary
+      },
+      deadlineUrgency: {
+        deadline: opp.deadline || null,
+        daysLeft: diffDays,
+        urgencyLevel,
+        summary: urgencySummary
+      },
+      relevantBehavior: {
+        type: behaviorType,
+        label: behaviorLabel,
+        summary: behaviorSummary
+      },
+      factors: [
+        {
+          id: "percentage",
+          label: "Match percentage",
+          value: `${finalMatchScore}%`,
+          summary: finalMatchScore > 0 ? `${finalMatchScore}% deterministic match based on profile attributes` : "0% (constrained due to hard eligibility blocker)",
+          status: finalMatchScore >= 75 ? "positive" : finalMatchScore >= 50 ? "neutral" : "negative"
+        },
+        {
+          id: "skills",
+          label: "Matched skills",
+          value: matchedSkills.length > 0 ? matchedSkills.join(", ") : (targetSkills.length === 0 ? "Open to all" : "None"),
+          summary: skillsSummary,
+          status: matchedSkills.length > 0 ? "positive" : targetSkills.length === 0 ? "neutral" : "warning"
+        },
+        {
+          id: "interests",
+          label: "Matched interests",
+          value: matchedInterests.length > 0 ? matchedInterests.join(", ") : "Exploratory",
+          summary: interestsSummary,
+          status: matchedInterests.length > 0 ? "positive" : "neutral"
+        },
+        {
+          id: "eligibility",
+          label: "Eligibility",
+          value: eligibilityResult.eligible === "PASS" ? "Eligible" : eligibilityResult.eligible === "FAIL" ? "Ineligible" : "Conditional",
+          summary: eligibilitySummary,
+          status: eligibilityResult.eligible === "PASS" ? "positive" : eligibilityResult.eligible === "FAIL" ? "negative" : "warning"
+        },
+        {
+          id: "location",
+          label: "Location/mode",
+          value: opp.work_mode ? `${opp.work_mode.toUpperCase()} · ${opp.location || "Anywhere"}` : (opp.location || "Flexible"),
+          summary: locationSummary,
+          status: isRemote || locationScore >= 80 ? "positive" : "neutral"
+        },
+        {
+          id: "urgency",
+          label: "Deadline urgency",
+          value: urgencyLevel,
+          summary: urgencySummary,
+          status: diffDays !== null && diffDays <= 3 && diffDays >= 0 ? "urgent" : "neutral"
+        },
+        {
+          id: "behavior",
+          label: "Relevant behavior",
+          value: behaviorLabel,
+          summary: behaviorSummary,
+          status: behaviorType === "saved" || behaviorType === "applied" ? "positive" : behaviorType === "passed" ? "negative" : "neutral"
+        }
+      ]
+    };
+
     return {
       finalMatchScore,
       matchScore: finalMatchScore, // Alias for backward compatibility
@@ -490,7 +699,8 @@ export class DeterministicMatchingEngine {
       matchedInterests,
       matchedSkillsAndInterests: [...new Set([...matchedSkills, ...matchedInterests])],
       missingSkills,
-      reasons: allReasons
+      reasons: allReasons,
+      whyThisMatches
     };
   }
 }
