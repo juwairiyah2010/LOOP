@@ -1,4 +1,6 @@
 import { getOpportunitiesCollection, formatOpportunity } from "../db.js";
+import { normalizeOpportunity } from "./normalizer.js";
+import { Deduplicator } from "./deduplicator.js";
 
 export class IngestionPipeline {
   constructor(adapters = []) {
@@ -35,7 +37,6 @@ export class IngestionPipeline {
     let grandDuplicate = 0;
     let grandFailed = 0;
 
-    // Run adapters independently so failure in one adapter does NOT stop the others!
     for (const adapter of targetAdapters) {
       const stats = {
         fetched: 0,
@@ -54,35 +55,34 @@ export class IngestionPipeline {
 
         for (const raw of rawItems) {
           try {
-            const opp = adapter.normalize(raw);
+            // Step 1: Normalize
+            const rawOpp = adapter.normalize(raw);
+            const opp = normalizeOpportunity(rawOpp);
+
+            // Step 2: Validate
             const { isValid, errors } = adapter.validate(opp);
 
             if (!isValid) {
               stats.failed++;
               grandFailed++;
-              console.warn(`[IngestionPipeline] Item validation failed for '${opp?.title}':`, errors);
+              console.warn(`[IngestionPipeline] Validation failed for '${opp?.title}':`, errors);
               continue;
             }
 
-            // Deduplication: match by source + source_id, id, content_hash, or title + organization
-            const existing = await coll.findOne({
-              $or: [
-                { source: opp.source, source_id: opp.source_id },
-                { id: opp.id },
-                { content_hash: opp.content_hash },
-                { title: opp.title, organization: opp.organization }
-              ]
-            });
-
+            // Step 3: Multi-Tier Deduplicate
+            const existingRes = await Deduplicator.findExisting(coll, opp);
             const now = new Date().toISOString();
 
-            if (existing) {
+            if (existingRes && existingRes.match) {
+              const existing = existingRes.match;
+              // Preserve existing URLs and references if incoming is missing
               const updates = {
                 last_seen_at: now,
                 last_verified_at: now,
                 updated_at: now,
                 deadline: opp.deadline || existing.deadline,
                 apply_url: opp.apply_url || existing.apply_url,
+                source_url: opp.source_url || existing.source_url,
                 description: opp.description || existing.description,
                 tags: Array.from(new Set([...(existing.tags || []), ...(opp.tags || [])]))
               };
@@ -107,7 +107,7 @@ export class IngestionPipeline {
           } catch (err) {
             stats.failed++;
             grandFailed++;
-            console.warn(`[IngestionPipeline] Failed processing item in '${adapter.name}':`, err.message);
+            console.warn(`[IngestionPipeline] Failed item in '${adapter.name}':`, err.message);
           }
         }
       } catch (err) {

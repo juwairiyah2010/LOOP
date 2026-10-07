@@ -18,9 +18,10 @@ export default [
         clearInterval: "readonly",
         fetch: "readonly",
         AbortSignal: "readonly",
+        URLSearchParams: "readonly",
+        URL: "readonly",
         global: "readonly",
-        globalThis: "readonly",
-        URL: "readonly"
+        globalThis: "readonly"
       }
     },
     rules: {
