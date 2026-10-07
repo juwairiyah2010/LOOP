@@ -1,4 +1,5 @@
 import { DeterministicEligibilityEngine } from "./eligibility/engine.js";
+import { DeterministicMatchingEngine } from "./matching/engine.js";
 import { DevToHackathonsAdapter } from "./ingestion/adapters/devto_hackathons.adapter.js";
 import { RemotiveInternshipsAdapter } from "./ingestion/adapters/remotive_internships.adapter.js";
 import { ArbeitnowOpportunitiesAdapter } from "./ingestion/adapters/arbeitnow_opportunities.adapter.js";
@@ -475,7 +476,7 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
         location: 1, deadline: 1, tags: 1, prize_amount: 1,
         work_mode: 1, verified: 1, featured: 1, description: 1,
         apply_url: 1, participants: 1, application_start_date: 1,
-        posted_at: 1, matchScore: 1, qualityScore: 1, source: 1, source_id: 1, source_url: 1, first_seen_at: 1, last_seen_at: 1, last_verified_at: 1
+        posted_at: 1, matchScore: 1, qualityScore: 1, source: 1, source_id: 1, source_url: 1, first_seen_at: 1, last_seen_at: 1, last_verified_at: 1, eligibility: 1
       }
     });
 
@@ -493,10 +494,30 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
 
     const [opps, watchlistRaw] = await Promise.all([oppsPromise, watchlistPromise]);
 
-    const results = opps.map(doc => ({
-      ...formatOpportunity(doc),
-      matchScore: doc.matchScore !== undefined ? Math.round(doc.matchScore) : 0,
-    }));
+    const results = opps.map(doc => {
+      const matchEval = DeterministicMatchingEngine.evaluate(dbUser, doc);
+      return {
+        ...formatOpportunity(doc),
+        matchScore: matchEval.finalMatchScore,
+        finalMatchScore: matchEval.finalMatchScore,
+        isEligible: matchEval.isEligible,
+        eligibility: matchEval.eligibility,
+        scoreBreakdown: matchEval.scoreBreakdown,
+        matchedSkills: matchEval.matchedSkills,
+        matchedInterests: matchEval.matchedInterests,
+        matchedSkillsAndInterests: matchEval.matchedSkillsAndInterests,
+        missingSkills: matchEval.missingSkills,
+        reasons: matchEval.reasons,
+      };
+    });
+
+    // Ensure highest eligible match scores appear first
+    if (profileTokens.length > 0) {
+      results.sort((a, b) => {
+        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+        return new Date(a.deadline) - new Date(b.deadline);
+      });
+    }
 
     const watchlist = watchlistRaw.map(d => formatOpportunity(d));
 
@@ -817,7 +838,8 @@ app.post("/api/opportunities", async (req, res) => {
         participants: 1,
         application_start_date: 1,
         posted_at: 1,
-        matchScore: 1
+        matchScore: 1,
+        eligibility: 1
       }
     });
 
@@ -907,10 +929,81 @@ app.post("/api/opportunities/:id/check-eligibility", requireAuth, async (req, re
     }
 
     const evaluation = DeterministicEligibilityEngine.evaluate(dbUser, opportunity);
+    const matching = DeterministicMatchingEngine.evaluate(dbUser, opportunity);
     return res.json({
       success: true,
       opportunityId: id,
-      evaluation
+      evaluation,
+      matching
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ----------------------------------------------------------------------
+// DETERMINISTIC MATCHING ENGINE ENDPOINTS
+// ----------------------------------------------------------------------
+
+// Evaluate matching for a specific opportunity against current user
+app.all("/api/opportunities/:id/match", requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dbUser } = await getDbUser(req.user.userId);
+    const oppsCol = await getOpportunitiesCollection();
+    const opportunity = await oppsCol.findOne(buildIdQuery(id));
+
+    if (!opportunity) {
+      return res.status(404).json({ error: "Opportunity not found" });
+    }
+
+    const matchResult = DeterministicMatchingEngine.evaluate(dbUser, opportunity);
+    return res.json({
+      success: true,
+      opportunityId: id,
+      finalMatchScore: matchResult.finalMatchScore,
+      matchScore: matchResult.matchScore,
+      isEligible: matchResult.isEligible,
+      eligibility: matchResult.eligibility,
+      scoreBreakdown: matchResult.scoreBreakdown,
+      matchedSkills: matchResult.matchedSkills,
+      matchedInterests: matchResult.matchedInterests,
+      matchedSkillsAndInterests: matchResult.matchedSkillsAndInterests,
+      missingSkills: matchResult.missingSkills,
+      reasons: matchResult.reasons
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// Generic matching evaluation endpoint (supports explicit profile & opp payloads or authenticated user)
+app.post("/api/matching/evaluate", async (req, res) => {
+  try {
+    let userPayload = req.body.profile || req.body.user;
+    const opportunityPayload = req.body.opportunity || req.body;
+    const options = req.body.options || {};
+
+    if (!userPayload && req.cookies?.token) {
+      try {
+        const decoded = jwt.verify(req.cookies.token, process.env.JWT_SECRET || "dev_secret_jwt_leap_lounge_2026_super_safe");
+        if (decoded?.userId) {
+          const { dbUser } = await getDbUser(decoded.userId);
+          userPayload = dbUser;
+        }
+      } catch {
+        // Fall back to empty user if token invalid
+      }
+    }
+
+    if (!opportunityPayload || typeof opportunityPayload !== "object") {
+      return res.status(400).json({ error: "Opportunity payload required" });
+    }
+
+    const matchResult = DeterministicMatchingEngine.evaluate(userPayload || {}, opportunityPayload, options);
+    return res.json({
+      success: true,
+      ...matchResult
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });

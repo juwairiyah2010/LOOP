@@ -847,9 +847,14 @@
           const urgent = startsIn <= 0 && daysLeft <= 7;
           const isFuture = startsIn > 0;
 
-          const tagsHtml = (opp.tags || []).slice(0, 3).map(t => `
-            <span class="px-2 py-0.5 border border-foreground/15 rounded-full font-mono text-[10px] uppercase">${t}</span>
-          `).join("");
+          const tagsHtml = (opp.tags || []).slice(0, 4).map(t => {
+            const isSkillMatched = (opp.matchedSkills || []).some(s => s.toLowerCase() === t.toLowerCase());
+            return `
+              <span class="px-2 py-0.5 border ${isSkillMatched ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-bold' : 'border-foreground/15'} rounded-full font-mono text-[10px] uppercase">
+                ${isSkillMatched ? '✓ ' : ''}${t}
+              </span>
+            `;
+          }).join("");
 
           return `
             <article
@@ -865,6 +870,15 @@
                     <span class="font-mono text-[10px] text-muted-foreground uppercase tracking-widest">
                       · Posted ${formatPostedTime(opp.posted_at || opp.created_at)}
                     </span>
+                    ${opp.eligibility?.status === "FAIL" ? `
+                      <span class="px-2 py-0.5 bg-destructive/15 text-destructive font-mono text-[10px] font-bold uppercase rounded-sm border border-destructive/30">
+                        ✕ Ineligible
+                      </span>
+                    ` : opp.eligibility?.status === "PASS" ? `
+                      <span class="px-2 py-0.5 bg-emerald-500/15 text-emerald-600 font-mono text-[10px] font-bold uppercase rounded-sm border border-emerald-500/30">
+                        ✓ Eligible
+                      </span>
+                    ` : ""}
                     ${opp.featured ? `
                       <span class="px-2 py-0.5 bg-lime text-foreground font-mono text-[10px] font-bold uppercase">
                         ★ Featured

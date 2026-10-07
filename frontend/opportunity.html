@@ -117,11 +117,41 @@
         if (!profileRes.ok) return;
         const profileData = await profileRes.json();
 
-        const score = getMatchScore(profileData.profile, opp.tags || []);
+        let matchData = null;
+        try {
+          const matchRes = await fetch(`/api/opportunities/${opp.id}/match`);
+          if (matchRes.ok) {
+            matchData = await matchRes.json();
+          }
+        } catch (mErr) {
+          console.warn("Could not fetch server match details:", mErr);
+        }
+
+        const score = matchData?.finalMatchScore !== undefined
+          ? matchData.finalMatchScore
+          : getMatchScore(profileData.profile, opp.tags || []);
+        const eligibility = matchData?.eligibility || null;
+        const breakdown = matchData?.scoreBreakdown || null;
+        const matchedSkills = matchData?.matchedSkills || [];
+        const missingSkills = matchData?.missingSkills || [];
+        const matchedInterests = matchData?.matchedInterests || [];
+        const reasons = matchData?.reasons || [];
+
         const daysLeft = formatDeadline(opp.deadline);
         const colorClass = categoryColors[opp.category] || "bg-foreground text-background";
         const isSaved = profileData.saved.includes(opp.id);
         const isApplied = profileData.applied.includes(opp.id);
+
+        let eligibilityBadge = "";
+        if (eligibility) {
+          if (eligibility.status === "PASS") {
+            eligibilityBadge = `<span class="px-2.5 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 flex items-center gap-1"><i data-lucide="shield-check" class="size-3"></i> Eligible</span>`;
+          } else if (eligibility.status === "FAIL") {
+            eligibilityBadge = `<span class="px-2.5 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase bg-destructive/15 text-destructive border border-destructive/30 flex items-center gap-1"><i data-lucide="shield-alert" class="size-3"></i> Ineligible</span>`;
+          } else {
+            eligibilityBadge = `<span class="px-2.5 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase bg-amber-500/20 text-amber-600 border border-amber-500/30 flex items-center gap-1"><i data-lucide="alert-circle" class="size-3"></i> Conditional</span>`;
+          }
+        }
 
         detailCard.innerHTML = `
           <!-- Header info -->
@@ -139,14 +169,19 @@
                     ${opp.work_mode}
                   </span>
                 ` : ""}
+                ${eligibilityBadge}
               </div>
               <h1 class="font-display text-4xl md:text-5xl uppercase tracking-tight leading-[0.95]">${opp.title}</h1>
               <div class="font-mono text-xs uppercase text-muted-foreground mt-2">${opp.organization}</div>
             </div>
 
-            <div class="flex flex-col md:items-end gap-1 shrink-0 bg-primary/5 p-4 border-2 border-primary/20 rounded-2xl">
-              <span class="font-mono text-[10px] text-primary font-bold uppercase">TAILORED MATCH</span>
+            <div class="flex flex-col md:items-end gap-1.5 shrink-0 bg-primary/5 p-4 border-2 border-primary/20 rounded-2xl">
+              <div class="flex items-center gap-2">
+                <span class="font-mono text-[10px] text-primary font-bold uppercase">MATCH SCORE</span>
+                ${eligibilityBadge}
+              </div>
               <span class="font-display text-4xl text-primary leading-none">${score}%</span>
+              <span class="font-mono text-[9px] text-muted-foreground uppercase">Deterministic & Explainable</span>
             </div>
           </div>
 
@@ -178,9 +213,116 @@
             <p class="font-sans text-sm leading-relaxed text-foreground/80">${opp.description}</p>
           </div>
 
+          <!-- Matching Intelligence & Explainability Breakdown -->
+          <div class="border-t border-foreground/10 pt-6 space-y-6">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 class="font-display text-2xl uppercase tracking-tight flex items-center gap-2">
+                  <i data-lucide="cpu" class="size-5 text-primary"></i> Matching Intelligence Breakdown
+                </h3>
+                <p class="font-mono text-[10px] uppercase text-muted-foreground mt-0.5">
+                  Multi-factor deterministic evaluation with eligibility constraint enforcement
+                </p>
+              </div>
+              ${eligibility ? `
+                <div class="font-mono text-xs font-bold uppercase">
+                  Constraint Status: <span class="${eligibility.status === 'PASS' ? 'text-emerald-600' : eligibility.status === 'FAIL' ? 'text-destructive' : 'text-amber-600'}">${eligibility.status}</span>
+                </div>
+              ` : ""}
+            </div>
+
+            ${eligibility && eligibility.status === "FAIL" && eligibility.blockers?.length > 0 ? `
+              <div class="p-4 bg-destructive/10 border-2 border-destructive/30 rounded-xl space-y-2">
+                <div class="font-mono text-xs font-bold uppercase text-destructive flex items-center gap-2">
+                  <i data-lucide="alert-octagon" class="size-4"></i> Eligibility Constraint Violation (Score Constrained to 0)
+                </div>
+                <ul class="list-disc list-inside text-xs font-mono text-destructive/90 space-y-1">
+                  ${eligibility.blockers.map(b => `<li>${b}</li>`).join("")}
+                </ul>
+              </div>
+            ` : ""}
+
+            <!-- Matched & Missing Skills -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="p-4 bg-muted/40 border border-foreground/10 rounded-xl space-y-2">
+                <div class="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <i data-lucide="check" class="size-3.5 text-emerald-600"></i> Matched Skills & Interests
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                  ${matchedSkills.length > 0 || matchedInterests.length > 0 ? `
+                    ${matchedSkills.map(s => `<span class="px-2 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 rounded-full font-mono text-[10px] uppercase font-bold">✓ ${s}</span>`).join("")}
+                    ${matchedInterests.map(i => `<span class="px-2 py-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30 rounded-full font-mono text-[10px] uppercase font-bold">★ ${i}</span>`).join("")}
+                  ` : `<span class="font-mono text-xs text-muted-foreground italic">None specifically matched</span>`}
+                </div>
+              </div>
+
+              <div class="p-4 bg-muted/40 border border-foreground/10 rounded-xl space-y-2">
+                <div class="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <i data-lucide="book-open" class="size-3.5 text-amber-600"></i> Missing Skills to Target
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                  ${missingSkills.length > 0 ? missingSkills.map(s => `
+                    <span class="px-2 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded-full font-mono text-[10px] uppercase font-bold">○ ${s}</span>
+                  `).join("") : `<span class="font-mono text-xs text-emerald-600 font-bold">✓ No missing required skills</span>`}
+                </div>
+              </div>
+            </div>
+
+            <!-- 8 Scoring Dimensions Grid -->
+            ${breakdown ? `
+              <div class="space-y-3">
+                <div class="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Score Dimensions (8 Factors)
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  ${[
+                    { key: "skills", label: "Skills", weight: "25%", val: breakdown.skills?.score || 0 },
+                    { key: "interests", label: "Interests", weight: "15%", val: breakdown.interests?.score || 0 },
+                    { key: "category", label: "Category", weight: "15%", val: breakdown.category?.score || 0 },
+                    { key: "location", label: "Location", weight: "15%", val: breakdown.location?.score || 0 },
+                    { key: "experience", label: "Experience", weight: "10%", val: breakdown.experience?.score || 0 },
+                    { key: "behavior", label: "Behavior", weight: "10%", val: breakdown.behavior?.score || 0 },
+                    { key: "urgency", label: "Urgency", weight: "5%", val: breakdown.urgency?.score || 0 },
+                    { key: "recency", label: "Recency", weight: "5%", val: breakdown.recency?.score || 0 },
+                  ].map(dim => `
+                    <div class="p-3 bg-card border border-foreground/15 rounded-xl flex flex-col justify-between">
+                      <div class="flex justify-between items-start">
+                        <span class="font-mono text-[10px] uppercase font-bold text-muted-foreground">${dim.label}</span>
+                        <span class="font-mono text-[9px] text-muted-foreground">${dim.weight}</span>
+                      </div>
+                      <div class="mt-2 flex items-baseline justify-between">
+                        <span class="font-display text-2xl">${dim.val}%</span>
+                      </div>
+                      <div class="w-full bg-muted h-1.5 rounded-full overflow-hidden mt-1.5">
+                        <div class="bg-primary h-full transition-all duration-300" style="width: ${dim.val}%"></div>
+                      </div>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
+
+            <!-- Deterministic Reasons -->
+            ${reasons.length > 0 ? `
+              <div class="space-y-2">
+                <div class="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Explainable Reasons
+                </div>
+                <div class="p-4 bg-muted/30 border border-foreground/10 rounded-xl space-y-1.5 font-mono text-xs">
+                  ${reasons.map(r => `
+                    <div class="flex items-start gap-2">
+                      <span class="text-primary font-bold shrink-0">›</span>
+                      <span>${r}</span>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
+          </div>
+
           <!-- Tags list -->
           <div class="space-y-2 border-t border-foreground/10 pt-6">
-            <div class="font-mono text-[9px] text-muted-foreground uppercase">TAGS & PREFERENCES</div>
+            <div class="font-mono text-[9px] text-muted-foreground uppercase">ALL TAGS & METADATA</div>
             <div class="flex flex-wrap gap-1.5">
               ${(opp.tags || []).map(t => `
                 <span class="px-2.5 py-1 bg-muted rounded-full font-mono text-[10px] uppercase">${t}</span>

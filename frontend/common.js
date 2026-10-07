@@ -45,6 +45,17 @@ function getMatchScore(profile, tags) {
   return Math.round((matched.length / tags.length) * 100);
 }
 
+// Fetch comprehensive deterministic match evaluation from server
+async function fetchOpportunityMatch(oppId) {
+  try {
+    const res = await fetch(`/api/opportunities/${oppId}/match`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error(`Failed to fetch match for opportunity ${oppId}:`, err);
+  }
+  return null;
+}
+
 // Fetch list of autocomplete options for skills/interests
 async function fetchMasterList(type) {
   try {
