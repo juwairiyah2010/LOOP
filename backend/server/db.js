@@ -496,11 +496,10 @@ async function setupIndexes(db) {
 
 export function formatOpportunity(doc) {
   if (!doc) return null;
-  const canonicalId = doc.id ? String(doc.id) : String(doc._id);
+  const canonicalId = doc.id ? String(doc.id) : (doc._id ? String(doc._id) : Math.random().toString(36).substring(2, 15));
   const now = new Date().toISOString();
-  return {
+  const formatted = {
     ...doc,
-    _id: String(doc._id),
     id: canonicalId,
     source: doc.source || "legacy",
     source_id: doc.source_id || null,
@@ -512,6 +511,12 @@ export function formatOpportunity(doc) {
     is_active: doc.is_active !== undefined ? doc.is_active : (doc.active !== false),
     active: doc.active !== undefined ? doc.active : (doc.is_active !== false)
   };
+  if (doc._id) {
+    formatted._id = String(doc._id);
+  } else {
+    delete formatted._id;
+  }
+  return formatted;
 }
 
 export function buildIdQuery(id) {

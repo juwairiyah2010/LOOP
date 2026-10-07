@@ -1,3 +1,5 @@
+import { IngestionPipeline } from "./ingestion/pipeline.js";
+import { SampleSourceAdapter } from "./ingestion/sample.adapter.js";
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 import express from "express";
@@ -879,6 +881,23 @@ app.get("/api/opportunities/:id", async (req, res) => {
       return res.status(404).json({ error: "Opportunity not found" });
     }
     return res.json(formatOpportunity(doc));
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+
+// ----------------------------------------------------------------------
+// DATA INGESTION ENGINE ENDPOINT
+// ----------------------------------------------------------------------
+app.post("/api/ingestion/run", requireAuth, async (req, res) => {
+  try {
+    const { adapter } = req.body || {};
+    const pipeline = new IngestionPipeline([
+      new SampleSourceAdapter()
+    ]);
+    const report = await pipeline.run(adapter || null);
+    return res.json({ success: true, report });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
