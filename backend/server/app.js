@@ -1,3 +1,4 @@
+import { DeterministicEligibilityEngine } from "./eligibility/engine.js";
 import { DevToHackathonsAdapter } from "./ingestion/adapters/devto_hackathons.adapter.js";
 import { RemotiveInternshipsAdapter } from "./ingestion/adapters/remotive_internships.adapter.js";
 import { ArbeitnowOpportunitiesAdapter } from "./ingestion/adapters/arbeitnow_opportunities.adapter.js";
@@ -889,6 +890,32 @@ app.get("/api/opportunities/:id", async (req, res) => {
   }
 });
 
+
+
+// ----------------------------------------------------------------------
+// DETERMINISTIC ELIGIBILITY CHECK ENDPOINT
+// ----------------------------------------------------------------------
+app.post("/api/opportunities/:id/check-eligibility", requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dbUser } = await getDbUser(req.user.userId);
+    const oppsCol = await getOpportunitiesCollection();
+    const opportunity = await oppsCol.findOne(buildIdQuery(id));
+
+    if (!opportunity) {
+      return res.status(404).json({ error: "Opportunity not found" });
+    }
+
+    const evaluation = DeterministicEligibilityEngine.evaluate(dbUser, opportunity);
+    return res.json({
+      success: true,
+      opportunityId: id,
+      evaluation
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 // ----------------------------------------------------------------------
 // DATA INGESTION ENGINE ENDPOINT
