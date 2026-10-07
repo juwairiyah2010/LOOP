@@ -508,6 +508,7 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
         matchedSkillsAndInterests: matchEval.matchedSkillsAndInterests,
         missingSkills: matchEval.missingSkills,
         reasons: matchEval.reasons,
+        whyThisMatches: matchEval.whyThisMatches,
       };
     });
 
@@ -890,7 +891,39 @@ app.post("/api/opportunities/by-ids", async (req, res) => {
     const coll = await getOpportunitiesCollection();
     const docs = await coll.find(buildIdsQuery(cappedIds)).toArray();
 
-    const results = docs.map((doc) => formatOpportunity(doc));
+    let dbUser = null;
+    if (req.cookies?.token) {
+      try {
+        const decoded = jwt.verify(req.cookies.token, process.env.JWT_SECRET || "dev_secret_jwt_leap_lounge_2026_super_safe");
+        if (decoded?.userId) {
+          const userRes = await getDbUser(decoded.userId);
+          dbUser = userRes?.dbUser;
+        }
+      } catch (e) {}
+    }
+
+    const results = docs.map((doc) => {
+      const formatted = formatOpportunity(doc);
+      if (dbUser) {
+        const matchEval = DeterministicMatchingEngine.evaluate(dbUser, doc);
+        return {
+          ...formatted,
+          matchScore: matchEval.finalMatchScore,
+          finalMatchScore: matchEval.finalMatchScore,
+          isEligible: matchEval.isEligible,
+          eligibility: matchEval.eligibility,
+          scoreBreakdown: matchEval.scoreBreakdown,
+          matchedSkills: matchEval.matchedSkills,
+          matchedInterests: matchEval.matchedInterests,
+          matchedSkillsAndInterests: matchEval.matchedSkillsAndInterests,
+          missingSkills: matchEval.missingSkills,
+          reasons: matchEval.reasons,
+          whyThisMatches: matchEval.whyThisMatches,
+        };
+      }
+      return formatted;
+    });
+
     return res.json(results);
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -906,7 +939,38 @@ app.get("/api/opportunities/:id", async (req, res) => {
     if (!doc) {
       return res.status(404).json({ error: "Opportunity not found" });
     }
-    return res.json(formatOpportunity(doc));
+    const formatted = formatOpportunity(doc);
+
+    let dbUser = null;
+    if (req.cookies?.token) {
+      try {
+        const decoded = jwt.verify(req.cookies.token, process.env.JWT_SECRET || "dev_secret_jwt_leap_lounge_2026_super_safe");
+        if (decoded?.userId) {
+          const userRes = await getDbUser(decoded.userId);
+          dbUser = userRes?.dbUser;
+        }
+      } catch (e) {}
+    }
+
+    if (dbUser) {
+      const matchEval = DeterministicMatchingEngine.evaluate(dbUser, doc);
+      return res.json({
+        ...formatted,
+        matchScore: matchEval.finalMatchScore,
+        finalMatchScore: matchEval.finalMatchScore,
+        isEligible: matchEval.isEligible,
+        eligibility: matchEval.eligibility,
+        scoreBreakdown: matchEval.scoreBreakdown,
+        matchedSkills: matchEval.matchedSkills,
+        matchedInterests: matchEval.matchedInterests,
+        matchedSkillsAndInterests: matchEval.matchedSkillsAndInterests,
+        missingSkills: matchEval.missingSkills,
+        reasons: matchEval.reasons,
+        whyThisMatches: matchEval.whyThisMatches,
+      });
+    }
+
+    return res.json(formatted);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -970,7 +1034,8 @@ app.all("/api/opportunities/:id/match", requireAuth, async (req, res) => {
       matchedInterests: matchResult.matchedInterests,
       matchedSkillsAndInterests: matchResult.matchedSkillsAndInterests,
       missingSkills: matchResult.missingSkills,
-      reasons: matchResult.reasons
+      reasons: matchResult.reasons,
+      whyThisMatches: matchResult.whyThisMatches
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });

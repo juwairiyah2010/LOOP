@@ -137,6 +137,14 @@
         const matchedInterests = matchData?.matchedInterests || [];
         const reasons = matchData?.reasons || [];
 
+        const whyThisMatches = matchData?.whyThisMatches || getWhyThisMatches(opp, profileData.profile, {
+          saved: profileData.saved,
+          interested: profileData.interested,
+          passed: profileData.passed,
+          applied: profileData.applied
+        });
+        const whySectionHtml = renderWhyThisMatchesSection(whyThisMatches, { compact: false });
+
         const daysLeft = formatDeadline(opp.deadline);
         const colorClass = categoryColors[opp.category] || "bg-foreground text-background";
         const isSaved = profileData.saved.includes(opp.id);
@@ -212,6 +220,9 @@
             <h3 class="font-display text-2xl uppercase tracking-tight">Program Description</h3>
             <p class="font-sans text-sm leading-relaxed text-foreground/80">${opp.description}</p>
           </div>
+
+          <!-- Dedicated "Why this matches" section -->
+          ${whySectionHtml}
 
           <!-- Matching Intelligence & Explainability Breakdown -->
           <div class="border-t border-foreground/10 pt-6 space-y-6">
