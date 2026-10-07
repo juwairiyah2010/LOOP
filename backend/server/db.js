@@ -190,7 +190,7 @@ class MockCursor {
   }
 }
 
-class MockCollection {
+export class MockCollection {
   constructor(name) {
     this.name = name;
   }

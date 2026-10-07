@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 import { GoogleGenAI } from "@google/genai";
-import { getOpportunitiesCollection, buildIdsQuery, formatOpportunity } from "./db.js";
+import { getOpportunitiesCollection } from "./db.js";
 
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -498,8 +498,6 @@ export async function generatePersonalizedOpportunities(userProfile) {
       }
     }
     return results;
-    
-    return parsed;
   } catch (error) {
     console.error("Gemini Generation Failed, using local fallback:", error.message);
     return generateMockOpportunitiesLocally(userProfile);
