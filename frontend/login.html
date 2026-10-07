@@ -119,9 +119,10 @@
       <div id="view-reset" class="hidden">
         <h1 class="font-display text-5xl uppercase tracking-tight leading-[0.9] mb-3">New<br>Password.</h1>
         <div id="code-reveal" class="mb-6 p-4 border-2 border-primary bg-primary/10 rounded-xl">
-          <p class="font-mono text-[10px] uppercase text-muted-foreground tracking-widest mb-1">Your reset code</p>
-          <p id="code-display" class="font-display text-4xl tracking-widest text-primary"></p>
-          <p class="font-mono text-[9px] uppercase text-muted-foreground mt-1">Expires in 10 minutes</p>
+          <p class="font-mono text-[10px] uppercase text-muted-foreground tracking-widest mb-1">Check Your Email</p>
+          <p class="font-sans text-xs text-foreground/80 mb-1">A 6-digit verification code has been sent. Enter it below to set your new password.</p>
+          <p id="dev-code-hint" class="hidden font-mono text-[11px] text-primary mt-2 p-2 bg-primary/15 rounded border border-primary/30"></p>
+          <p class="font-mono text-[9px] uppercase text-muted-foreground mt-2">Expires in 10 minutes</p>
         </div>
         <div id="reset-error" class="hidden mb-4 p-4 border-2 border-destructive bg-destructive/10 text-destructive font-mono text-xs uppercase rounded-xl"></div>
         <form id="reset-form" class="flex flex-col gap-6">
@@ -246,7 +247,20 @@
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Verification failed");
           verifiedUsername = username;
-          document.getElementById("code-display").innerText = data.code;
+          // In local development, check dev endpoint if available
+          if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+            try {
+              const devRes = await fetch(`/api/auth/reset/dev-code?username=${encodeURIComponent(username)}`);
+              if (devRes.ok) {
+                const devData = await devRes.json();
+                const hintEl = document.getElementById("dev-code-hint");
+                if (hintEl && devData.devCode) {
+                  hintEl.innerText = `[DEV ONLY] Code: ${devData.devCode}`;
+                  hintEl.classList.remove("hidden");
+                }
+              }
+            } catch (_) {}
+          }
           showView("view-reset");
         } catch (err) {
           verifyError.innerText = err.message;

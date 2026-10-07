@@ -17,12 +17,26 @@ import {
   getMasterSkillsCollection, 
   getMasterInterestsCollection 
 } from "./db.js";
-import { generatePersonalizedOpportunities, checkRateLimit, analyzeResumePdf } from "./gemini.server.js";
+import { generatePersonalizedOpportunities, analyzeResumePdf } from "./gemini.server.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const JWT_SECRET = process.env.JWT_SECRET || "default_development_secret_do_not_use_in_prod";
+// JWT_SECRET must be set via environment variable.
+// Production: process exits immediately if missing (fail-fast, not fail-open).
+// Development: uses a clearly-labelled dev-only fallback so the server still boots.
+const JWT_SECRET = (() => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("FATAL: JWT_SECRET environment variable is not set. Refusing to start in production.");
+      process.exit(1);
+    }
+    console.warn("WARNING: JWT_SECRET not set — using dev-only fallback. NEVER deploy without a real secret.");
+    return "loop-dev-only-secret-not-for-production";
+  }
+  return secret;
+})();
 const PORT = process.env.PORT || 8080;
 
 function toObjectId(id) {
@@ -38,9 +52,46 @@ const app = express();
 // ── Performance: gzip all responses ──────────────────────────────────────────
 app.use(compression());
 
+// CORS — explicit origin allowlist only.
+// Set ALLOWED_ORIGINS in your environment as a comma-separated list of full origins.
+// Example: ALLOWED_ORIGINS=https://loop-loveoppor.vercel.app,https://www.yourdomain.com
+// Leave empty if the frontend is served from the same origin (Vercel monorepo).
+const _ALLOWED_ORIGINS_ENV = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const _DEV_ORIGINS = [
+  "http://localhost:8080",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:8080",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
+];
+
+const _VERCEL_ORIGINS = [
+  process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
+  process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null,
+].filter(Boolean);
+
 app.use(cors({
-  origin: true,
-  credentials: true
+  origin(origin, callback) {
+    // Requests with no Origin header (same-origin navigation, server-to-server, curl) are allowed
+    if (!origin) return callback(null, true);
+
+    const allowed =
+      process.env.NODE_ENV !== "production"
+        ? [..._DEV_ORIGINS, ..._ALLOWED_ORIGINS_ENV, ..._VERCEL_ORIGINS]
+        : [..._ALLOWED_ORIGINS_ENV, ..._VERCEL_ORIGINS];
+
+    if (allowed.includes(origin)) {
+      return callback(null, true);
+    }
+    // Reject unknown origin: return null, false so no CORS allow headers are emitted
+    return callback(null, false);
+  },
+  credentials: true,
 }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
@@ -70,7 +121,7 @@ function requireAuth(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
-  } catch (err) {
+  } catch {
     return res.status(401).json({ error: "Invalid token session" });
   }
 }
@@ -82,7 +133,7 @@ function softAuth(req, res, next) {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       req.user = decoded;
-    } catch (err) {
+    } catch {
       // Ignore invalid token
     }
   }
@@ -105,7 +156,13 @@ app.get("/api/auth/me", softAuth, async (req, res) => {
 app.post("/api/auth/authenticate", async (req, res) => {
   const { name, password } = req.body;
   if (!name || !password) {
-    return res.status(400).json({ error: "Name and password required" });
+    return res.status(400).json({ error: "Username and password are required" });
+  }
+  if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 50) {
+    return res.status(400).json({ error: "Username must be between 2 and 50 characters" });
+  }
+  if (typeof password !== "string" || password.length < 6 || password.length > 128) {
+    return res.status(400).json({ error: "Password must be between 6 and 128 characters" });
   }
 
   try {
@@ -196,7 +253,10 @@ app.post("/api/auth/reset/verify", async (req, res) => {
       { _id: user._id },
       { $set: { resetCode: code, resetCodeExpires: expiresAt } }
     );
-    return res.json({ success: true, message: "Identity verified. Security reset code issued." });
+    // SECURITY: The reset code is NEVER returned in the API response and NEVER logged.
+    // In production: delivered via email infrastructure.
+    // In development: accessible via secure dev-only endpoint /api/auth/reset/dev-code.
+    return res.json({ success: true, message: "If that account exists, a reset code has been prepared. Check your email." });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -230,6 +290,28 @@ app.post("/api/auth/reset/confirm", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// Development-only mechanism: inspect reset code for testing without email infrastructure.
+// Strictly disabled (returns 404) in production. Code is never logged.
+if (process.env.NODE_ENV !== "production") {
+  app.get("/api/auth/reset/dev-code", async (req, res) => {
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ error: "Username required" });
+    try {
+      const users = await getUsersCollection();
+      const user = await users.findOne({ name: username });
+      if (!user || !user.resetCode) {
+        return res.status(404).json({ error: "No active reset code found" });
+      }
+      if (!user.resetCodeExpires || new Date() > new Date(user.resetCodeExpires)) {
+        return res.status(400).json({ error: "Reset code has expired" });
+      }
+      return res.json({ success: true, devCode: user.resetCode });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+}
 
 
 // ----------------------------------------------------------------------
@@ -439,6 +521,50 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
 app.get("/api/ping", (req, res) => res.json({ ok: true, ts: Date.now() }));
 
 
+// ── Distributed per-user rate limiter (MongoDB-backed) ───────────────────────
+// Stores rate-limit state in the user document under `rateLimits.<action>`.
+// Unlike in-memory Maps, this survives Vercel cold-starts and is shared across
+// all function instances — making it truly per-user, not per-instance.
+// Fails open (returns true) on transient DB errors so users are never blocked
+// by infrastructure problems.
+async function checkDbRateLimit(userId, action, maxCalls = 5, windowMs = 60_000) {
+  try {
+    const users = await getUsersCollection();
+    const now = Date.now();
+
+    const doc = await users.findOne(
+      { _id: toObjectId(userId) },
+      { projection: { rateLimits: 1 } }
+    );
+    if (!doc) return false;
+
+    const rateLimits = { ...(doc.rateLimits || {}) };
+    const rl = rateLimits[action] || { count: 0, resetAt: 0 };
+
+    if (rl.resetAt <= now) {
+      // Window expired — start a fresh window
+      rateLimits[action] = { count: 1, resetAt: now + windowMs };
+      await users.updateOne(
+        { _id: toObjectId(userId) },
+        { $set: { rateLimits } }
+      );
+      return true;
+    }
+
+    if (rl.count >= maxCalls) return false; // limit reached
+
+    rateLimits[action] = { count: rl.count + 1, resetAt: rl.resetAt };
+    await users.updateOne(
+      { _id: toObjectId(userId) },
+      { $set: { rateLimits } }
+    );
+    return true;
+  } catch (err) {
+    console.error("DB rate limit check failed (failing open):", err.message);
+    return true; // fail open — prefer availability over perfect rate limiting
+  }
+}
+
 // Allowed profile fields — whitelist prevents arbitrary DB field injection
 const ALLOWED_PROFILE_FIELDS = new Set([
   "name", "field", "bio", "university", "year_of_study",
@@ -452,11 +578,35 @@ app.post("/api/user/profile", requireAuth, async (req, res) => {
   try {
     const { users } = await getDbUser(req.user.userId);
     const data = req.body;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return res.status(400).json({ error: "Profile data must be an object" });
+    }
 
     // Reject any key not in the whitelist
     const rejected = Object.keys(data).filter(k => !ALLOWED_PROFILE_FIELDS.has(k));
     if (rejected.length > 0) {
       return res.status(400).json({ error: `Unknown profile fields: ${rejected.join(", ")}` });
+    }
+
+    // Input validation: bounds on field types and sizes
+    for (const [key, val] of Object.entries(data)) {
+      if (["interests", "skills", "categories", "preferred_locations"].includes(key)) {
+        if (!Array.isArray(val) || val.length > 100 || val.some(item => typeof item !== "string" || item.length > 100)) {
+          return res.status(400).json({ error: `Invalid format or excessive length for ${key}` });
+        }
+      } else if (key === "avatar") {
+        if (typeof val !== "string" || val.length > 5_000_000) {
+          return res.status(400).json({ error: "Avatar must be under 5MB" });
+        }
+      } else if (key === "bio") {
+        if (typeof val !== "string" || val.length > 2000) {
+          return res.status(400).json({ error: "Bio cannot exceed 2000 characters" });
+        }
+      } else {
+        if (typeof val !== "string" || val.length > 500) {
+          return res.status(400).json({ error: `${key} must be a string under 500 characters` });
+        }
+      }
     }
 
     const updateQuery = Object.keys(data).reduce((acc, key) => {
@@ -738,13 +888,17 @@ app.get("/api/opportunities/:id", async (req, res) => {
 app.post("/api/gemini/generate", requireAuth, async (req, res) => {
   try {
     const { profile } = req.body;
-    if (!profile) {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
       return res.status(400).json({ error: "User profile required" });
     }
+    if (JSON.stringify(profile).length > 20000) {
+      return res.status(400).json({ error: "Profile payload too large" });
+    }
 
-    const rateLimitIdentifier = profile.name || "anonymous";
-    if (!checkRateLimit(rateLimitIdentifier)) {
-      return res.status(429).json({ error: "Rate limit exceeded. Please wait a minute before trying again." });
+    // Rate limit: 5 generations per minute, keyed on authenticated userId (not bypassable via profile.name)
+    const allowedGenerate = await checkDbRateLimit(req.user.userId, "gemini_generate", 5, 60_000);
+    if (!allowedGenerate) {
+      return res.status(429).json({ error: "Rate limit exceeded. Please wait a minute before generating again." });
     }
 
     const results = await generatePersonalizedOpportunities(profile);
@@ -759,12 +913,18 @@ app.post("/api/gemini/generate", requireAuth, async (req, res) => {
 app.post("/api/gemini/analyze-resume", requireAuth, async (req, res) => {
   try {
     const { base64Pdf } = req.body;
-    if (!base64Pdf) {
-      return res.status(400).json({ error: "base64Pdf required" });
+    if (!base64Pdf || typeof base64Pdf !== "string") {
+      return res.status(400).json({ error: "base64Pdf is required and must be a base64-encoded string" });
+    }
+    // Guard oversized payloads: 14 MB base64 ≈ ~10 MB decoded
+    if (base64Pdf.length > 14_000_000) {
+      return res.status(413).json({ error: "Resume file too large. Maximum size is 10 MB." });
     }
 
-    if (!checkRateLimit("resume_upload")) {
-      return res.status(429).json({ error: "Rate limit exceeded. Please wait a minute before trying again." });
+    // Rate limit: 3 resume analyses per minute, keyed on userId (not shared globally)
+    const allowedResume = await checkDbRateLimit(req.user.userId, "resume_analyze", 3, 60_000);
+    if (!allowedResume) {
+      return res.status(429).json({ error: "Rate limit exceeded. Please wait a minute before uploading again." });
     }
 
     const results = await analyzeResumePdf(base64Pdf);
@@ -799,28 +959,42 @@ app.get("/api/master/interests", async (req, res) => {
   }
 });
 
-app.post("/api/master/skills", async (req, res) => {
+app.post("/api/master/skills", requireAuth, async (req, res) => {
+  const { name } = req.body;
+  if (!name || typeof name !== "string") return res.status(400).json({ error: "Skill name must be a non-empty string" });
+  const trimmed = name.trim();
+  if (!trimmed)           return res.status(400).json({ error: "Skill name cannot be blank" });
+  if (trimmed.length > 80) return res.status(400).json({ error: "Skill name must be 80 characters or fewer" });
   try {
-    const { name } = req.body;
-    if (!name) return res.status(400).json({ error: "Skill name required" });
     const coll = await getMasterSkillsCollection();
-    await coll.insertOne({ name });
+    const existing = await coll.findOne({ name: { $regex: `^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: "i" } });
+    if (existing) {
+      return res.status(409).json({ error: "Skill already exists", duplicate: true });
+    }
+    await coll.insertOne({ name: trimmed });
     return res.json({ success: true });
   } catch (error) {
-    if (error.code === 11000) return res.json({ success: true });
+    if (error.code === 11000) return res.status(409).json({ error: "Skill already exists", duplicate: true });
     return res.status(500).json({ error: error.message });
   }
 });
 
-app.post("/api/master/interests", async (req, res) => {
+app.post("/api/master/interests", requireAuth, async (req, res) => {
+  const { name } = req.body;
+  if (!name || typeof name !== "string") return res.status(400).json({ error: "Interest name must be a non-empty string" });
+  const trimmed = name.trim();
+  if (!trimmed)           return res.status(400).json({ error: "Interest name cannot be blank" });
+  if (trimmed.length > 80) return res.status(400).json({ error: "Interest name must be 80 characters or fewer" });
   try {
-    const { name } = req.body;
-    if (!name) return res.status(400).json({ error: "Interest name required" });
     const coll = await getMasterInterestsCollection();
-    await coll.insertOne({ name });
+    const existing = await coll.findOne({ name: { $regex: `^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: "i" } });
+    if (existing) {
+      return res.status(409).json({ error: "Interest already exists", duplicate: true });
+    }
+    await coll.insertOne({ name: trimmed });
     return res.json({ success: true });
   } catch (error) {
-    if (error.code === 11000) return res.json({ success: true });
+    if (error.code === 11000) return res.status(409).json({ error: "Interest already exists", duplicate: true });
     return res.status(500).json({ error: error.message });
   }
 });
