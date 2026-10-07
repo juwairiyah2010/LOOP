@@ -301,6 +301,7 @@ async function generateMockOpportunitiesLocally(userProfile) {
   const results = baseList.map(opp => ({
     ...opp,
     id: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
+    source: "local-generated",
     posted_at: new Date().toISOString(),
     deadline: new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString() // 60 days in future
   }));
@@ -526,6 +527,12 @@ export async function generatePersonalizedOpportunities(userProfile) {
     const docsToInsert = parsed.map(opp => {
        const newDoc = { ...opp };
        delete newDoc._id;
+       if (!newDoc.id) {
+         newDoc.id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+       }
+       if (!newDoc.source) {
+         newDoc.source = "gemini";
+       }
        return newDoc;
     });
 

@@ -97,7 +97,7 @@ function saveMockDb() {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(mockDbFilePath, JSON.stringify(mockDbData, null, 2), "utf8");
-  } catch (err) {
+  } catch {
     // Silently ignore — in production, MongoDB handles persistence
   }
 }
@@ -293,11 +293,18 @@ class MockCollection {
   }
 
   async deleteMany(filter = {}) {
-    this.data = [];
-    return { deletedCount: this.data.length };
+    const prevCount = this.data.length;
+    if (!filter || Object.keys(filter).length === 0) {
+      this.data = [];
+      return { deletedCount: prevCount };
+    }
+    this.data = this.data.filter(item => {
+      return !Object.entries(filter).every(([k, v]) => item[k] === v);
+    });
+    return { deletedCount: prevCount - this.data.length };
   }
 
-  async createIndex(keys, options) {
+  async createIndex(_keys, _options) {
     return "mock_index";
   }
 

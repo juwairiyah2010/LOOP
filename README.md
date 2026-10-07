@@ -85,6 +85,7 @@ JWT_SECRET=your_secret
 GEMINI_API_KEY=your_gemini_api_key
 PORT=8080
 NODE_ENV=development
+ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
 
 3. Start the server
 
