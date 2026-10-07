@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 dotenv.config({ override: true });
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import fs from "fs";
 import path from "path";
 import { mockOpportunities } from "./mock-opportunities.js";
@@ -111,19 +111,7 @@ function matchQuery(item, query) {
   if (!query) return true;
   for (const [key, val] of Object.entries(query)) {
     if (key === "$or" && Array.isArray(val)) {
-      const matched = val.some((subQuery) => {
-        return Object.entries(subQuery).some(([field, matchVal]) => {
-          const itemVal = item[field];
-          if (matchVal && typeof matchVal === "object" && matchVal.$regex) {
-            const regex = new RegExp(matchVal.$regex, matchVal.$options || "");
-            if (Array.isArray(itemVal)) {
-              return itemVal.some(v => regex.test(String(v)));
-            }
-            return regex.test(String(itemVal));
-          }
-          return String(itemVal) === String(matchVal);
-        });
-      });
+      const matched = val.some((subQuery) => matchQuery(item, subQuery));
       if (!matched) return false;
     } else if (key === "$text") {
       // Simulate Atlas $text search in MockCollection via substring match
@@ -504,4 +492,72 @@ async function setupIndexes(db) {
   } catch (error) {
     console.error("Failed to setup indexes and seed collections:", error);
   }
+}
+
+
+export function formatOpportunity(doc) {
+  if (!doc) return null;
+  const canonicalId = doc.id ? String(doc.id) : String(doc._id);
+  const now = new Date().toISOString();
+  return {
+    ...doc,
+    _id: String(doc._id),
+    id: canonicalId,
+    source: doc.source || "legacy",
+    source_id: doc.source_id || null,
+    source_url: doc.source_url || doc.apply_url || null,
+    first_seen_at: doc.first_seen_at || doc.posted_at || now,
+    last_seen_at: doc.last_seen_at || now,
+    last_verified_at: doc.last_verified_at || now,
+    content_hash: doc.content_hash || null,
+    is_active: doc.is_active !== undefined ? doc.is_active : (doc.active !== false),
+    active: doc.active !== undefined ? doc.active : (doc.is_active !== false)
+  };
+}
+
+export function buildIdQuery(id) {
+  if (!id) return { _id: null };
+  const strId = String(id);
+  const conditions = [{ id: strId }];
+  if (/^[0-9a-fA-F]{24}$/.test(strId)) {
+    try {
+      conditions.push({ _id: new ObjectId(strId) });
+    } catch {
+      // ignore
+    }
+  }
+  return { $or: conditions };
+}
+
+export function buildIdsQuery(idsArray) {
+  if (!Array.isArray(idsArray) || idsArray.length === 0) {
+    return { _id: null };
+  }
+  const strIds = idsArray
+    .map(item => {
+      if (typeof item === "object" && item !== null) {
+        return item.opportunityId || item.id || String(item);
+      }
+      return String(item);
+    })
+    .filter(Boolean);
+
+  if (strIds.length === 0) return { _id: null };
+
+  const validObjectIds = [];
+  strIds.forEach(strId => {
+    if (/^[0-9a-fA-F]{24}$/.test(strId)) {
+      try {
+        validObjectIds.push(new ObjectId(strId));
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  const conditions = [{ id: { $in: strIds } }];
+  if (validObjectIds.length > 0) {
+    conditions.push({ _id: { $in: validObjectIds } });
+  }
+  return { $or: conditions };
 }

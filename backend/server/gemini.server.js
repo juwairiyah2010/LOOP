@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 import { GoogleGenAI } from "@google/genai";
-import { getOpportunitiesCollection } from "./db.js";
+import { getOpportunitiesCollection, buildIdsQuery, formatOpportunity } from "./db.js";
 
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -325,7 +325,7 @@ export async function analyzeOpportunities(userProfile, opportunityIds) {
   if (opportunityIds && opportunityIds.length === 0) return [];
 
   const query = opportunityIds && opportunityIds.length > 0
-    ? { id: { $in: opportunityIds } }
+    ? buildIdsQuery(opportunityIds)
     : {};
 
   const docs = await coll.find(query).limit(50).toArray();

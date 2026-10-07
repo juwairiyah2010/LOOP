@@ -15,7 +15,10 @@ import {
   getUsersCollection, 
   getOpportunitiesCollection, 
   getMasterSkillsCollection, 
-  getMasterInterestsCollection 
+  getMasterInterestsCollection, 
+  formatOpportunity, 
+  buildIdQuery, 
+  buildIdsQuery 
 } from "./db.js";
 import { generatePersonalizedOpportunities, analyzeResumePdf } from "./gemini.server.js";
 
@@ -25,6 +28,16 @@ const __dirname = path.dirname(__filename);
 // JWT_SECRET must be set via environment variable.
 // Production: process exits immediately if missing (fail-fast, not fail-open).
 // Development: uses a clearly-labelled dev-only fallback so the server still boots.
+
+function extractStringIds(list = []) {
+  return list.map(item => {
+    if (typeof item === "object" && item !== null) {
+      return item.opportunityId || item.id || String(item);
+    }
+    return String(item);
+  }).filter(Boolean);
+}
+
 const JWT_SECRET = (() => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -354,10 +367,10 @@ app.get("/api/user/profile", requireAuth, async (req, res) => {
     res.setHeader("Cache-Control", "private, max-age=30");
     return res.json({
       profile,
-      saved: dbUser.saved || [],
-      interested: dbUser.interested || [],
-      passed: dbUser.passed || [],
-      applied: dbUser.applied || []
+      saved: extractStringIds(dbUser.saved),
+      interested: extractStringIds(dbUser.interested),
+      passed: extractStringIds(dbUser.passed),
+      applied: extractStringIds(dbUser.applied)
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -402,13 +415,13 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
 
     // Pagination support — page=1 by default, max 100 per page
     const page  = Math.max(1, parseInt(req.query.page  || "1", 10));
-    const limit = Math.min(100, Math.max(10, parseInt(req.query.limit || "50", 10)));
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || "20", 10)));
     const skip  = (page - 1) * limit;
 
     // Build aggregate pipeline with match scoring + descending sort
     // active: { $ne: false } hides archived/deleted opportunities
     const pipeline = [
-      { $match: { deadline: { $gte: now }, active: { $ne: false } } }
+      { $match: { deadline: { $gte: now }, active: { $ne: false }, is_active: { $ne: false } } }
     ];
 
     if (profileTokens.length > 0) {
@@ -464,15 +477,10 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
     const oppsPromise = oppsCol.aggregate(pipeline).toArray();
 
     // Watchlist: upcoming deadlines from saved items
-    const savedIds = dbUser.saved || [];
+    const savedIds = extractStringIds(dbUser.saved);
     const watchlistPromise = savedIds.length > 0
       ? oppsCol.find(
-          { $or: [
-              { id: { $in: savedIds } },
-              { _id: { $in: savedIds.filter(id => /^[0-9a-fA-F]{24}$/.test(id)).map(id => toObjectId(id)) } }
-            ],
-            deadline: { $gte: now }
-          },
+          { ...buildIdsQuery(savedIds), deadline: { $gte: now }, active: { $ne: false }, is_active: { $ne: false } },
           { projection: { title: 1, organization: 1, deadline: 1, id: 1, _id: 1 } }
         ).sort({ deadline: 1 }).limit(5).toArray()
       : Promise.resolve([]);
@@ -480,15 +488,11 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
     const [opps, watchlistRaw] = await Promise.all([oppsPromise, watchlistPromise]);
 
     const results = opps.map(doc => ({
-      ...doc,
-      _id: String(doc._id),
-      id: doc.id ? String(doc.id) : String(doc._id),
+      ...formatOpportunity(doc),
       matchScore: doc.matchScore !== undefined ? Math.round(doc.matchScore) : 0,
     }));
 
-    const watchlist = watchlistRaw.map(d => ({
-      ...d, _id: String(d._id), id: d.id ? String(d.id) : String(d._id)
-    }));
+    const watchlist = watchlistRaw.map(d => formatOpportunity(d));
 
     const profile = {
       name: p.name || "",
@@ -505,10 +509,10 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
     res.setHeader("Cache-Control", "private, max-age=15");
     return res.json({
       profile,
-      saved: dbUser.saved || [],
-      interested: dbUser.interested || [],
-      passed: dbUser.passed || [],
-      applied: dbUser.applied || [],
+      saved: extractStringIds(dbUser.saved),
+      interested: extractStringIds(dbUser.interested),
+      passed: extractStringIds(dbUser.passed),
+      applied: extractStringIds(dbUser.applied),
       opportunities: results,
       watchlist,
     });
@@ -672,8 +676,12 @@ app.post("/api/user/passed/add", requireAuth, async (req, res) => {
     const { users } = await getDbUser(req.user.userId);
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: "Opportunity ID required" });
+    const strId = String(id);
 
-    await users.updateOne({ _id: toObjectId(req.user.userId) }, { $addToSet: { passed: id } });
+    await users.updateOne(
+      { _id: toObjectId(req.user.userId) },
+      { $push: { passed: { $each: [strId], $slice: -200 } } }
+    );
     return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -700,14 +708,17 @@ app.post("/api/user/applied/toggle", requireAuth, async (req, res) => {
     const { users, dbUser } = await getDbUser(req.user.userId);
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: "Opportunity ID required" });
+    const strId = String(id);
 
     const list = dbUser.applied || [];
-    const isApplied = list.includes(id);
+    const isApplied = list.some(item => typeof item === "object" && item !== null ? item.opportunityId === strId || item.id === strId : String(item) === strId);
 
     if (isApplied) {
-      await users.updateOne({ _id: toObjectId(req.user.userId) }, { $pull: { applied: id } });
+      const updatedList = list.filter(item => typeof item === "object" && item !== null ? item.opportunityId !== strId && item.id !== strId : String(item) !== strId);
+      await users.updateOne({ _id: toObjectId(req.user.userId) }, { $set: { applied: updatedList } });
     } else {
-      await users.updateOne({ _id: toObjectId(req.user.userId) }, { $addToSet: { applied: id } });
+      const newEntry = { opportunityId: strId, applied_at: new Date().toISOString() };
+      await users.updateOne({ _id: toObjectId(req.user.userId) }, { $push: { applied: newEntry } });
     }
     return res.json({ success: true, applied: !isApplied });
   } catch (error) {
@@ -736,9 +747,10 @@ app.post("/api/opportunities", async (req, res) => {
       match.$text = { $search: filters.q };
     }
 
-    // Only show active, future opportunities
+    // Only show active, non-expired opportunities
     match.deadline = { $gte: new Date().toISOString() };
     match.active   = { $ne: false };
+    match.is_active = { $ne: false };
 
     if (Object.keys(match).length > 0) {
       pipeline.push({ $match: match });
@@ -773,8 +785,8 @@ app.post("/api/opportunities", async (req, res) => {
       pipeline.push({ $sort: { deadline: 1 } });
     }
 
-    const page = filters.page || 1;
-    const limit = filters.limit || 20;
+    const page = Math.max(1, parseInt(filters.page || "1", 10));
+    const limit = Math.min(50, Math.max(1, parseInt(filters.limit || "20", 10)));
     const skip = (page - 1) * limit;
 
     pipeline.push({ $skip: skip });
@@ -805,11 +817,7 @@ app.post("/api/opportunities", async (req, res) => {
 
     const docs = await coll.aggregate(pipeline).toArray();
 
-    const results = docs.map((doc) => ({
-      ...doc,
-      _id: String(doc._id),
-      id: doc.id ? String(doc.id) : String(doc._id),
-    }));
+    const results = docs.map((doc) => formatOpportunity(doc));
 
     return res.json(results);
   } catch (error) {
@@ -822,7 +830,11 @@ app.get("/api/opportunities/ticker", async (req, res) => {
   try {
     const coll = await getOpportunitiesCollection();
     const docs = await coll
-      .find({ deadline: { $gte: new Date().toISOString() } })
+      .find({
+        deadline: { $gte: new Date().toISOString() },
+        active: { $ne: false },
+        is_active: { $ne: false }
+      })
       .sort({ deadline: 1 })
       .limit(8)
       .toArray();
@@ -846,15 +858,11 @@ app.post("/api/opportunities/by-ids", async (req, res) => {
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       return res.json([]);
     }
+    const cappedIds = ids.slice(0, 100);
     const coll = await getOpportunitiesCollection();
-    const docs = await coll.find({ id: { $in: ids } }).toArray();
+    const docs = await coll.find(buildIdsQuery(cappedIds)).toArray();
 
-    const results = docs.map((doc) => ({
-      ...doc,
-      _id: String(doc._id),
-      id: doc.id ? String(doc.id) : String(doc._id),
-    }));
-
+    const results = docs.map((doc) => formatOpportunity(doc));
     return res.json(results);
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -866,15 +874,11 @@ app.get("/api/opportunities/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const coll = await getOpportunitiesCollection();
-    const doc = await coll.findOne({ id });
+    const doc = await coll.findOne(buildIdQuery(id));
     if (!doc) {
       return res.status(404).json({ error: "Opportunity not found" });
     }
-    return res.json({
-      ...doc,
-      _id: String(doc._id),
-      id: doc.id ? String(doc.id) : String(doc._id),
-    });
+    return res.json(formatOpportunity(doc));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
