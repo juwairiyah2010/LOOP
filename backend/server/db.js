@@ -284,12 +284,11 @@ class MockCollection {
     const prevCount = this.data.length;
     if (!filter || Object.keys(filter).length === 0) {
       this.data = [];
-      return { deletedCount: prevCount };
+      return { deletedCount: prevCount, acknowledged: true };
     }
-    this.data = this.data.filter(item => {
-      return !Object.entries(filter).every(([k, v]) => item[k] === v);
-    });
-    return { deletedCount: prevCount - this.data.length };
+    this.data = this.data.filter(item => !matchQuery(item, filter));
+    const deletedCount = prevCount - this.data.length;
+    return { deletedCount, acknowledged: true };
   }
 
   async createIndex(_keys, _options) {

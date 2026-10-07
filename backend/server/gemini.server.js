@@ -294,124 +294,61 @@ const fieldOpportunities = {
   ]
 };
 
+
+function generateStableMockId(title, organization) {
+  const str = `${title}_${organization}`.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  return "mock_" + str.substring(0, 32);
+}
+
 async function generateMockOpportunitiesLocally(userProfile) {
   const field = userProfile.field || "Software Engineering";
   const baseList = fieldOpportunities[field] || fieldOpportunities["default"];
-  
-  const results = baseList.map(opp => ({
-    ...opp,
-    id: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
-    source: "local-generated",
-    posted_at: new Date().toISOString(),
-    deadline: new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString() // 60 days in future
-  }));
-
-  // Insert into DB
+  const now = new Date().toISOString();
   const coll = await getOpportunitiesCollection();
-  await coll.insertMany(results);
+
+  const results = [];
+
+  for (const opp of baseList) {
+    const stableId = generateStableMockId(opp.title, opp.organization);
+    const existing = await coll.findOne({ $or: [{ id: stableId }, { title: opp.title, organization: opp.organization }] });
+
+    const oppDoc = {
+      ...opp,
+      id: existing ? existing.id : stableId,
+      source: "mock",
+      source_id: null,
+      source_url: opp.apply_url || null,
+      posted_at: opp.posted_at || now,
+      first_seen_at: existing ? (existing.first_seen_at || now) : now,
+      last_seen_at: now,
+      last_verified_at: now,
+      created_at: existing ? (existing.created_at || now) : now,
+      updated_at: now,
+      deadline: opp.deadline || new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString(),
+      active: true,
+      is_active: true,
+      status: "active",
+      verified: false,
+      featured: opp.featured !== undefined ? opp.featured : true,
+      work_mode: opp.work_mode || "hybrid"
+    };
+
+    if (existing) {
+      await coll.updateOne({ _id: existing._id }, { $set: { last_seen_at: now, last_verified_at: now, updated_at: now } });
+      results.push({ ...existing, ...oppDoc });
+    } else {
+      await coll.insertOne(oppDoc);
+      results.push(oppDoc);
+    }
+  }
+
   return results;
 }
+
 
 // ======================================================================
 // GEMINI PUBLIC ROUTE EXPORTS WITH FALLBACKS
 // ======================================================================
-
-/**
- * Analyzes a list of opportunities against a user's profile.
- */
-export async function analyzeOpportunities(userProfile, opportunityIds) {
-  const coll = await getOpportunitiesCollection();
-
-  if (opportunityIds && opportunityIds.length === 0) return [];
-
-  const query = opportunityIds && opportunityIds.length > 0
-    ? buildIdsQuery(opportunityIds)
-    : {};
-
-  const docs = await coll.find(query).limit(50).toArray();
-  const opportunities = docs.map((doc) => ({
-    ...doc,
-    _id: String(doc._id),
-    id: doc.id ? String(doc.id) : String(doc._id),
-  }));
-
-  if (!opportunities.length) return [];
-
-  if (isPlaceholderKey) {
-    // Generate mock analysis report locally
-    return opportunities.map((opp, index) => {
-      const matchScoreVal = Math.min(100, Math.floor(Math.random() * 50) + 50); // 50 to 100
-      return {
-        opportunityId: opp.id,
-        matchScore: matchScoreVal,
-        recommendationReason: `Strong match with your profile. The project aligns with your field of study in ${userProfile.field}.`,
-        missingSkills: opp.tags.slice(2, 4),
-        priorityRanking: index + 1
-      };
-    }).sort((a,b) => b.matchScore - a.matchScore);
-  }
-
-  const prompt = `
-    You are an AI career advisor. Evaluate the match between the user profile and the listed opportunities.
-
-    USER PROFILE:
-    Name: ${userProfile.name}
-    Primary Field: ${userProfile.field}
-    Interests/Categories: ${userProfile.interests.join(", ")}, ${userProfile.categories.join(", ")}
-    Known Skills: ${userProfile.skills.join(", ")}
-
-    OPPORTUNITIES:
-    ${opportunities
-      .map(
-        (opp) => `
-      - ID: ${opp.id}
-      - Title: ${opp.title}
-      - Organization: ${opp.organization}
-      - Category: ${opp.category}
-      - Tags: ${opp.tags.join(", ")}
-      - Description: ${opp.description.substring(0, 500)}...
-    `
-      )
-      .join("\n")}
-
-    Return exactly a JSON array of objects. Each object MUST have the following keys:
-    - "opportunityId" (string: the ID of the opportunity)
-    - "matchScore" (number: 0-100 indicating how well the profile matches the opportunity)
-    - "recommendationReason" (string: 1-2 sentences explaining why it's a good or bad match)
-    - "missingSkills" (array of strings: skills the user doesn't have but are required/helpful)
-    - "priorityRanking" (number: 1 for best match, 2 for second best, etc.)
-  `;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
-
-    let responseText = response.text;
-    if (!responseText) throw new Error("No response from Gemini API");
-
-    responseText = responseText.replace(/^```(?:json)?\n?/i, "").replace(/\n?```\n?$/i, "").trim();
-
-    const parsed = JSON.parse(responseText);
-    return parsed.sort((a, b) => a.priorityRanking - b.priorityRanking);
-  } catch (error) {
-    console.error("Gemini Analysis Failed, using local fallback:", error.message);
-    // Graceful Degradation: return local mocks
-    return opportunities.map((opp, index) => {
-      return {
-        opportunityId: opp.id,
-        matchScore: 85,
-        recommendationReason: `Matched via offline algorithm. Highly matches your studies in ${userProfile.field}.`,
-        missingSkills: [],
-        priorityRanking: index + 1
-      };
-    });
-  }
-}
 
 /**
  * Analyzes resume base64 PDF
@@ -502,7 +439,7 @@ export async function generatePersonalizedOpportunities(userProfile) {
     - "featured" (boolean: true)
     - "posted_at" (string: current ISO date string)
     - "work_mode" (string: "remote", "hybrid", or "onsite")
-    - "verified" (boolean: true)
+    - "verified" (boolean: false, AI generated content is unverified by default)
   `;
 
   try {
@@ -524,21 +461,43 @@ export async function generatePersonalizedOpportunities(userProfile) {
     // Insert into DB
     const coll = await getOpportunitiesCollection();
     
-    const docsToInsert = parsed.map(opp => {
-       const newDoc = { ...opp };
-       delete newDoc._id;
-       if (!newDoc.id) {
-         newDoc.id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-       }
-       if (!newDoc.source) {
-         newDoc.source = "gemini";
-       }
-       return newDoc;
-    });
+    const now = new Date().toISOString();
+    const results = [];
 
-    if (docsToInsert.length > 0) {
-      await coll.insertMany(docsToInsert);
+    for (const opp of parsed) {
+      const title = opp.title || "AI Opportunity";
+      const org = opp.organization || "AI Generated";
+      const stableId = "ai_" + Buffer.from(`${title}_${org}`).toString("hex").substring(0, 16);
+
+      const existing = await coll.findOne({ $or: [{ id: stableId }, { title, organization: org }] });
+
+      const docToSave = {
+        ...opp,
+        id: existing ? existing.id : (opp.id || stableId),
+        source: "ai_generated",
+        source_id: null,
+        source_url: typeof opp.apply_url === "string" && opp.apply_url.startsWith("http") ? opp.apply_url : null,
+        first_seen_at: existing ? (existing.first_seen_at || now) : now,
+        last_seen_at: now,
+        last_verified_at: now,
+        created_at: existing ? (existing.created_at || now) : now,
+        updated_at: now,
+        posted_at: opp.posted_at || now,
+        active: true,
+        is_active: true,
+        status: "active",
+        verified: false
+      };
+
+      if (existing) {
+        await coll.updateOne({ _id: existing._id }, { $set: { last_seen_at: now, updated_at: now } });
+        results.push({ ...existing, ...docToSave });
+      } else {
+        await coll.insertOne(docToSave);
+        results.push(docToSave);
+      }
     }
+    return results;
     
     return parsed;
   } catch (error) {
