@@ -10,34 +10,47 @@ export class IngestionPipeline {
   }
 
   async run(adapterName = null) {
-    const report = {
-      started_at: new Date().toISOString(),
-      adapters_run: [],
-      total_fetched: 0,
-      total_valid: 0,
-      total_inserted: 0,
-      total_updated: 0,
-      total_skipped: 0,
-      errors: []
-    };
+    const startedAt = new Date().toISOString();
+    const adapterStats = {};
 
     const targetAdapters = adapterName
       ? this.adapters.filter(a => a.name === adapterName)
       : this.adapters;
 
     if (targetAdapters.length === 0) {
-      report.errors.push(`No adapters found matching name '${adapterName}'`);
-      return report;
+      return {
+        started_at: startedAt,
+        finished_at: new Date().toISOString(),
+        summary: { adapters_count: 0, total_fetched: 0, total_added: 0, total_updated: 0, total_duplicate: 0, total_failed: 0 },
+        adapters: {},
+        error: `No adapters found matching name '${adapterName}'`
+      };
     }
 
     const coll = await getOpportunitiesCollection();
 
+    let grandFetched = 0;
+    let grandAdded = 0;
+    let grandUpdated = 0;
+    let grandDuplicate = 0;
+    let grandFailed = 0;
+
+    // Run adapters independently so failure in one adapter does NOT stop the others!
     for (const adapter of targetAdapters) {
-      report.adapters_run.push(adapter.name);
+      const stats = {
+        fetched: 0,
+        added: 0,
+        updated: 0,
+        duplicate: 0,
+        failed: 0,
+        error: null
+      };
+
       try {
         console.log(`[IngestionPipeline] Running adapter '${adapter.name}'...`);
         const rawItems = await adapter.fetch();
-        report.total_fetched += rawItems.length;
+        stats.fetched = Array.isArray(rawItems) ? rawItems.length : 0;
+        grandFetched += stats.fetched;
 
         for (const raw of rawItems) {
           try {
@@ -45,14 +58,13 @@ export class IngestionPipeline {
             const { isValid, errors } = adapter.validate(opp);
 
             if (!isValid) {
-              report.total_skipped++;
-              report.errors.push({ adapter: adapter.name, item: opp.title || "Unknown", errors });
+              stats.failed++;
+              grandFailed++;
+              console.warn(`[IngestionPipeline] Item validation failed for '${opp?.title}':`, errors);
               continue;
             }
 
-            report.total_valid++;
-
-            // Repeat-safe deduplication: match by source + source_id, id, content_hash, or title + org
+            // Deduplication: match by source + source_id, id, content_hash, or title + organization
             const existing = await coll.findOne({
               $or: [
                 { source: opp.source, source_id: opp.source_id },
@@ -76,7 +88,8 @@ export class IngestionPipeline {
               };
 
               await coll.updateOne({ _id: existing._id }, { $set: updates });
-              report.total_updated++;
+              stats.updated++;
+              grandUpdated++;
             } else {
               const newDoc = formatOpportunity({
                 ...opp,
@@ -88,19 +101,37 @@ export class IngestionPipeline {
               });
 
               await coll.insertOne(newDoc);
-              report.total_inserted++;
+              stats.added++;
+              grandAdded++;
             }
           } catch (err) {
-            report.total_skipped++;
-            report.errors.push({ adapter: adapter.name, error: err.message });
+            stats.failed++;
+            grandFailed++;
+            console.warn(`[IngestionPipeline] Failed processing item in '${adapter.name}':`, err.message);
           }
         }
       } catch (err) {
-        report.errors.push({ adapter: adapter.name, fatal: err.message });
+        stats.error = err.message;
+        console.error(`[IngestionPipeline] Adapter '${adapter.name}' failed:`, err.message);
       }
+
+      adapterStats[adapter.name] = stats;
     }
 
-    report.finished_at = new Date().toISOString();
-    return report;
+    const finishedAt = new Date().toISOString();
+
+    return {
+      started_at: startedAt,
+      finished_at: finishedAt,
+      summary: {
+        adapters_count: targetAdapters.length,
+        total_fetched: grandFetched,
+        total_added: grandAdded,
+        total_updated: grandUpdated,
+        total_duplicate: grandDuplicate,
+        total_failed: grandFailed
+      },
+      adapters: adapterStats
+    };
   }
 }

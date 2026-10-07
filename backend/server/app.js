@@ -1,3 +1,6 @@
+import { DevToHackathonsAdapter } from "./ingestion/adapters/devto_hackathons.adapter.js";
+import { RemotiveInternshipsAdapter } from "./ingestion/adapters/remotive_internships.adapter.js";
+import { ArbeitnowOpportunitiesAdapter } from "./ingestion/adapters/arbeitnow_opportunities.adapter.js";
 import { IngestionPipeline } from "./ingestion/pipeline.js";
 import { SampleSourceAdapter } from "./ingestion/sample.adapter.js";
 import dotenv from "dotenv";
@@ -894,6 +897,9 @@ app.post("/api/ingestion/run", requireAuth, async (req, res) => {
   try {
     const { adapter } = req.body || {};
     const pipeline = new IngestionPipeline([
+      new DevToHackathonsAdapter(),
+      new RemotiveInternshipsAdapter(),
+      new ArbeitnowOpportunitiesAdapter(),
       new SampleSourceAdapter()
     ]);
     const report = await pipeline.run(adapter || null);

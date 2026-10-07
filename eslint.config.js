@@ -17,6 +17,7 @@ export default [
         setInterval: "readonly",
         clearInterval: "readonly",
         fetch: "readonly",
+        AbortSignal: "readonly",
         global: "readonly",
         globalThis: "readonly",
         URL: "readonly"
