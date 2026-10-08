@@ -237,6 +237,7 @@ export class MockCollection {
       newDoc.interested = newDoc.interested || [];
       newDoc.passed = newDoc.passed || [];
       newDoc.applied = newDoc.applied || [];
+      newDoc.lifecycle = newDoc.lifecycle || {}; // keyed by opportunityId
     }
     const current = this.data;
     current.push(newDoc);
@@ -259,9 +260,24 @@ export class MockCollection {
   async updateOne(filter, update) {
     const item = await this.findOne(filter);
     if (!item) return { matchedCount: 0, modifiedCount: 0 };
-    
+
     if (update.$set) {
-      Object.assign(item, update.$set);
+      for (const [key, value] of Object.entries(update.$set)) {
+        // Support dotted-path keys: e.g. "lifecycle.abc123"
+        if (key.includes(".")) {
+          const parts = key.split(".");
+          let target = item;
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (target[parts[i]] === undefined || target[parts[i]] === null || typeof target[parts[i]] !== "object") {
+              target[parts[i]] = {};
+            }
+            target = target[parts[i]];
+          }
+          target[parts[parts.length - 1]] = value;
+        } else {
+          item[key] = value;
+        }
+      }
     }
     if (update.$addToSet) {
       for (const [key, value] of Object.entries(update.$addToSet)) {
@@ -276,10 +292,23 @@ export class MockCollection {
         }
       }
     }
+    if (update.$push) {
+      for (const [key, value] of Object.entries(update.$push)) {
+        if (!Array.isArray(item[key])) item[key] = [];
+        if (value && typeof value === "object" && value.$each) {
+          // $push: { field: { $each: [...], $slice: N } }
+          item[key].push(...value.$each);
+          if (value.$slice) item[key] = item[key].slice(value.$slice);
+        } else {
+          item[key].push(value);
+        }
+      }
+    }
 
     this.data = this.data.map(d => d._id === item._id ? item : d);
     return { matchedCount: 1, modifiedCount: 1 };
   }
+
 
   async deleteMany(filter = {}) {
     const prevCount = this.data.length;
