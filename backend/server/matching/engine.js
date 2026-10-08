@@ -303,8 +303,11 @@ export class DeterministicMatchingEngine {
 
     // -------------------------------------------------------------
     // 7. URGENCY SCORING (Weight: 8%)
+    // Levels: CRITICAL | URGENT | PRIORITY | PREPARE | PLAN | ROLLING | CLOSED
+    // Source of truth: opp.deadline (stored field only — never invented)
     // -------------------------------------------------------------
     let urgencyScore = 70;
+    let _urgencyLevel = "ROLLING";
     if (opp.deadline) {
       const deadlineDate = new Date(opp.deadline);
       const diffMs = deadlineDate.getTime() - now.getTime();
@@ -312,29 +315,41 @@ export class DeterministicMatchingEngine {
 
       if (diffDays < 0) {
         urgencyScore = 0;
-        reasons.push("Urgency (0%): Deadline has passed.");
+        _urgencyLevel = "CLOSED";
+        reasons.push("Urgency (0%): CLOSED — Deadline has passed.");
       } else if (diffDays === 0) {
         urgencyScore = 100;
-        reasons.push("Urgency (100%): Closes today! Immediate action required.");
+        _urgencyLevel = "CRITICAL";
+        reasons.push("Urgency (100%): CRITICAL — Closes today! Submit immediately.");
       } else if (diffDays <= 3) {
         urgencyScore = 95;
-        reasons.push(`Urgency (95%): High urgency — closes in ${diffDays} day(s).`);
+        _urgencyLevel = "CRITICAL";
+        reasons.push(`Urgency (95%): CRITICAL — closes in ${diffDays} day${diffDays === 1 ? "" : "s"}. Act now.`);
       } else if (diffDays <= 7) {
         urgencyScore = 90;
-        reasons.push(`Urgency (90%): Closes this week (${diffDays} days left).`);
-      } else if (diffDays <= 21) {
+        _urgencyLevel = "URGENT";
+        reasons.push(`Urgency (90%): URGENT — closes in ${diffDays} days. Finalize application.`);
+      } else if (diffDays <= 14) {
         urgencyScore = 80;
-        reasons.push(`Urgency (80%): Active application window (${diffDays} days left).`);
-      } else if (diffDays <= 60) {
+        _urgencyLevel = "PRIORITY";
+        reasons.push(`Urgency (80%): PRIORITY — ${diffDays} days left. Begin application now.`);
+      } else if (diffDays <= 30) {
         urgencyScore = 70;
-        reasons.push(`Urgency (70%): Ample time to apply (${diffDays} days left).`);
+        _urgencyLevel = "PREPARE";
+        reasons.push(`Urgency (70%): PREPARE — ${diffDays} days left. Gather materials.`);
+      } else if (diffDays <= 90) {
+        urgencyScore = 60;
+        _urgencyLevel = "PLAN";
+        reasons.push(`Urgency (60%): PLAN — ${diffDays} days left. Early planning recommended.`);
       } else {
-        urgencyScore = 55;
-        reasons.push(`Urgency (55%): Distant deadline (${diffDays} days left).`);
+        urgencyScore = 50;
+        _urgencyLevel = "PLAN";
+        reasons.push(`Urgency (50%): PLAN — Distant deadline (${diffDays} days left). Monitor for updates.`);
       }
     } else {
       urgencyScore = 60;
-      reasons.push("Urgency (60%): Rolling / unspecified deadline.");
+      _urgencyLevel = "ROLLING";
+      reasons.push("Urgency (60%): ROLLING — No fixed deadline. Apply at any time.");
     }
 
     // -------------------------------------------------------------
@@ -489,36 +504,56 @@ export class DeterministicMatchingEngine {
       locationSummary = `Location: ${opp.location || "Flexible / Unspecified"}`;
     }
 
-    // 5. Deadline urgency summary
+    // 5. Deadline urgency — structured PLAN/PREPARE/PRIORITY/URGENT/CRITICAL
+    // Source of truth: opp.deadline only. Never invent or estimate deadlines.
+    let urgencyLevel = "ROLLING";
     let urgencySummary = "";
-    let urgencyLevel = "Rolling";
+    let recommendedAction = "";
+    let deadlineConfidence = "HIGH"; // HIGH = stored date present, LOW = rolling/missing
     let diffDays = null;
     if (opp.deadline) {
       const deadlineDate = new Date(opp.deadline);
       const diffMs = deadlineDate.getTime() - now.getTime();
       diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      deadlineConfidence = "HIGH";
       if (diffDays < 0) {
-        urgencyLevel = "Closed";
-        urgencySummary = `Deadline passed (${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"} ago)`;
+        urgencyLevel = "CLOSED";
+        urgencySummary = `Deadline passed ${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"} ago`;
+        recommendedAction = "Check if applications are still accepted or look for re-openings";
       } else if (diffDays === 0) {
-        urgencyLevel = "Closes today";
-        urgencySummary = "Closes today! Immediate action required";
+        urgencyLevel = "CRITICAL";
+        urgencySummary = "Closes today — submit immediately";
+        recommendedAction = "Submit your application right now";
       } else if (diffDays <= 3) {
-        urgencyLevel = "High urgency";
-        urgencySummary = `Closes in ${diffDays} day${diffDays === 1 ? "" : "s"} (high urgency)`;
+        urgencyLevel = "CRITICAL";
+        urgencySummary = `Closes in ${diffDays} day${diffDays === 1 ? "" : "s"} — act now`;
+        recommendedAction = "Complete and submit your application today";
       } else if (diffDays <= 7) {
-        urgencyLevel = "Closing this week";
-        urgencySummary = `Closes this week (${diffDays} days left)`;
-      } else if (diffDays <= 21) {
-        urgencyLevel = "Active window";
-        urgencySummary = `Active application window (${diffDays} days left)`;
+        urgencyLevel = "URGENT";
+        urgencySummary = `Closes in ${diffDays} days — finalize application`;
+        recommendedAction = "Finalize materials and submit before the deadline";
+      } else if (diffDays <= 14) {
+        urgencyLevel = "PRIORITY";
+        urgencySummary = `${diffDays} days remaining — begin application`;
+        recommendedAction = "Start your application now to allow revision time";
+      } else if (diffDays <= 30) {
+        urgencyLevel = "PREPARE";
+        urgencySummary = `${diffDays} days remaining — gather materials`;
+        recommendedAction = "Collect documents, references, and draft your materials";
+      } else if (diffDays <= 90) {
+        urgencyLevel = "PLAN";
+        urgencySummary = `${diffDays} days remaining — plan ahead`;
+        recommendedAction = "Add to calendar and plan your preparation timeline";
       } else {
-        urgencyLevel = "Open";
-        urgencySummary = `Open with ample time (${diffDays} days left)`;
+        urgencyLevel = "PLAN";
+        urgencySummary = `${diffDays} days remaining — distant deadline`;
+        recommendedAction = "Monitor for updates and begin long-term preparation";
       }
     } else {
-      urgencyLevel = "Rolling";
-      urgencySummary = "Rolling deadline with no fixed cut-off";
+      urgencyLevel = "ROLLING";
+      deadlineConfidence = "LOW";
+      urgencySummary = "Rolling deadline — no fixed cut-off date stored";
+      recommendedAction = "Apply when ready; check the listing for submission windows";
     }
 
     // 6. Relevant behavior summary
@@ -575,6 +610,8 @@ export class DeterministicMatchingEngine {
         deadline: opp.deadline || null,
         daysLeft: diffDays,
         urgencyLevel,
+        deadlineConfidence,
+        recommendedAction,
         summary: urgencySummary
       },
       relevantBehavior: {
@@ -623,7 +660,12 @@ export class DeterministicMatchingEngine {
           label: "Deadline urgency",
           value: urgencyLevel,
           summary: urgencySummary,
-          status: diffDays !== null && diffDays <= 3 && diffDays >= 0 ? "urgent" : "neutral"
+          confidence: deadlineConfidence,
+          action: recommendedAction,
+          status: urgencyLevel === "CRITICAL" ? "urgent"
+            : urgencyLevel === "CLOSED" ? "negative"
+            : urgencyLevel === "URGENT" ? "warning"
+            : "neutral"
         },
         {
           id: "behavior",
