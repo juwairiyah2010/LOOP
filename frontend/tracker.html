@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LOOP — Application Tracker</title>
+  <meta name="description" content="Track every opportunity through your full application lifecycle — from discovery to acceptance.">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            background: 'var(--background)', foreground: 'var(--foreground)',
+            primary: 'var(--primary)', 'primary-foreground': 'var(--primary-foreground)',
+            secondary: 'var(--secondary)', 'secondary-foreground': 'var(--secondary-foreground)',
+            muted: 'var(--muted)', 'muted-foreground': 'var(--muted-foreground)',
+            border: 'var(--border)', card: 'var(--card)',
+            lime: 'var(--lime)', amber: 'var(--amber)', indigo: 'var(--indigo)',
+          },
+          fontFamily: {
+            display: ['Anton','Impact','sans-serif'],
+            body: ['Inter','system-ui','sans-serif'],
+            mono: ['JetBrains Mono','ui-monospace','monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .tracker-card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+    .tracker-card:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0,0,0,0.10); }
+    .modal-backdrop { background: rgba(0,0,0,0.55); backdrop-filter: blur(4px); }
+    .animate-entry { animation: entryAnim 0.35s cubic-bezier(0.22,1,0.36,1) both; }
+    @keyframes entryAnim { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    .shimmer { background: linear-gradient(90deg, var(--muted) 25%, color-mix(in srgb,var(--muted) 60%,transparent) 50%, var(--muted) 75%); background-size:200% 100%; animation: shimmer 1.4s infinite; }
+    @keyframes shimmer { 0%{background-position:200% 0}100%{background-position:-200% 0} }
+  </style>
+</head>
+<body class="min-h-screen bg-background text-foreground font-body">
+
+  <div class="sticky top-0 z-50 bg-primary text-primary-foreground py-1.5 overflow-hidden border-b-2 border-foreground">
+    <div id="marquee-ticker" class="marquee-content gap-10 whitespace-nowrap font-mono text-[11px] font-bold uppercase tracking-tight">
+      <span class="inline-flex items-center gap-3"><span>LOOP · Application Lifecycle Tracker</span><span class="opacity-50">✦</span></span>
+    </div>
+  </div>
+
+  <header class="sticky top-[28px] z-40 bg-background/80 backdrop-blur-md border-b-2 border-foreground/10">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
+      <a href="/" class="font-display text-3xl uppercase tracking-tighter italic leading-none shrink-0">LOOP<span class="text-primary">.</span></a>
+      <nav id="header-nav" class="flex items-center gap-1"></nav>
+    </div>
+  </header>
+
+  <div class="max-w-6xl mx-auto px-6 pt-10 pb-6">
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+      <div>
+        <div class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Application Pipeline · <span id="current-month"></span></div>
+        <h1 class="font-display text-6xl uppercase tracking-tighter italic leading-none mt-1">Tracker<span class="text-primary">.</span></h1>
+      </div>
+      <div id="stats-row" class="flex items-center gap-3 pb-1"></div>
+    </div>
+    <div id="pipeline-bar" class="mt-6 flex items-center gap-1.5 overflow-x-auto pb-1"></div>
+  </div>
+
+  <div class="max-w-6xl mx-auto px-6 mb-6">
+    <div class="flex items-center gap-1.5 overflow-x-auto pb-1" id="stage-tabs"></div>
+  </div>
+
+  <main class="max-w-6xl mx-auto px-6 pb-16">
+    <div id="cards-container" class="space-y-3 animate-entry">
+      <div class="shimmer h-32 rounded-2xl"></div>
+      <div class="shimmer h-32 rounded-2xl"></div>
+      <div class="shimmer h-28 rounded-2xl opacity-70"></div>
+    </div>
+    <div id="empty-state" class="hidden border-2 border-dashed border-foreground/20 rounded-3xl p-16 text-center">
+      <div class="font-display text-4xl uppercase">Nothing tracked yet.</div>
+      <p class="font-mono text-xs uppercase tracking-widest text-muted-foreground mt-2">Save or apply to opportunities from the feed — they'll appear here.</p>
+      <a href="/" class="mt-6 inline-flex bg-foreground text-background px-6 py-3 rounded-xl font-mono text-xs font-bold uppercase hover:bg-primary transition-all">Explore feed</a>
+    </div>
+  </main>
+
+  <footer class="border-t-2 border-foreground/10 py-8">
+    <div class="max-w-6xl mx-auto px-6 flex justify-between items-center">
+      <div class="font-display text-2xl uppercase tracking-tighter italic">LOOP.</div>
+      <div class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">No more missed deadlines.</div>
+    </div>
+  </footer>
+
+  <!-- Edit Modal -->
+  <div id="modal-backdrop" class="hidden fixed inset-0 z-50 modal-backdrop flex items-end md:items-center justify-center p-0 md:p-6">
+    <div id="modal-panel" class="w-full md:max-w-2xl bg-card border-2 border-foreground rounded-t-3xl md:rounded-3xl overflow-hidden shadow-2xl animate-entry max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between px-6 pt-6 pb-4 border-b-2 border-foreground/10">
+        <div>
+          <div id="modal-subtitle" class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground"></div>
+          <div id="modal-title" class="font-display text-2xl uppercase tracking-tight leading-tight mt-0.5"></div>
+        </div>
+        <button id="modal-close" class="p-2 rounded-xl border-2 border-foreground/20 hover:border-foreground hover:bg-foreground/5 transition-all"><i data-lucide="x" class="size-4"></i></button>
+      </div>
+      <div class="p-6 space-y-5">
+        <div>
+          <label class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-2">Lifecycle Stage</label>
+          <div id="modal-stage-grid" class="grid grid-cols-3 sm:grid-cols-5 gap-1.5"></div>
+        </div>
+        <div id="modal-appdate-wrap" class="hidden">
+          <label class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-1.5">Application Date</label>
+          <input id="modal-appdate" type="date" class="w-full px-3 py-2 bg-muted border-2 border-foreground/15 rounded-xl font-mono text-sm focus:outline-none focus:border-primary">
+        </div>
+        <div>
+          <label class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-1.5">Resume Version</label>
+          <input id="modal-resume" type="text" placeholder="e.g. v3-tech, SWE-2026, general" maxlength="200"
+            class="w-full px-3 py-2 bg-muted border-2 border-foreground/15 rounded-xl font-mono text-sm focus:outline-none focus:border-primary">
+        </div>
+        <div>
+          <label class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-1.5">Follow-up Reminder Date</label>
+          <input id="modal-followup" type="date" class="w-full px-3 py-2 bg-muted border-2 border-foreground/15 rounded-xl font-mono text-sm focus:outline-none focus:border-primary">
+        </div>
+        <div>
+          <label class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-1.5">Notes <span class="text-muted-foreground font-normal">(max 2000 chars)</span></label>
+          <textarea id="modal-notes" rows="4" maxlength="2000" placeholder="Portal link, contact, interview prep, any notes..."
+            class="w-full px-3 py-2 bg-muted border-2 border-foreground/15 rounded-xl font-mono text-sm resize-none focus:outline-none focus:border-primary"></textarea>
+          <div class="text-right font-mono text-[9px] text-muted-foreground mt-1"><span id="notes-char">0</span>/2000</div>
+        </div>
+        <div id="modal-history-wrap" class="hidden">
+          <label class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-2">Stage History</label>
+          <div id="modal-history" class="space-y-1 max-h-36 overflow-y-auto pr-1 border border-foreground/10 rounded-xl p-3"></div>
+        </div>
+      </div>
+      <div class="px-6 pb-6 flex gap-3">
+        <button id="modal-save" class="flex-1 px-5 py-3 bg-foreground text-background border-2 border-foreground rounded-xl font-mono text-[11px] font-bold uppercase hover:bg-primary hover:border-primary transition-all">Save Changes</button>
+        <button id="modal-remove" class="px-4 py-3 border-2 border-foreground/20 rounded-xl text-destructive font-mono text-[11px] font-bold uppercase hover:bg-destructive/10 hover:border-destructive/30 transition-all">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/common.js"></script>
+  <script>
+    const STAGES = ["DISCOVERED","SAVED","INTERESTED","PREPARING","APPLIED","SHORTLISTED","INTERVIEW","ACCEPTED","REJECTED"];
+    const STAGE_ICONS = { DISCOVERED:"search", SAVED:"bookmark", INTERESTED:"heart", PREPARING:"file-text", APPLIED:"send", SHORTLISTED:"list-checks", INTERVIEW:"mic", ACCEPTED:"circle-check", REJECTED:"circle-x" };
+    const STAGE_BADGE = {
+      DISCOVERED: "bg-foreground/5 text-foreground/60 border border-foreground/15",
+      SAVED:      "bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/30",
+      INTERESTED: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/30",
+      PREPARING:  "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30",
+      APPLIED:    "bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/30",
+      SHORTLISTED:"bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30",
+      INTERVIEW:  "bg-orange-500/10 text-orange-700 dark:text-orange-300 border border-orange-500/30",
+      ACCEPTED:   "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30",
+      REJECTED:   "bg-red-500/10 text-red-700 dark:text-red-300 border border-red-500/30",
+    };
+    const STAGE_BORDER = {
+      DISCOVERED:"border-foreground/15", SAVED:"border-sky-500/25", INTERESTED:"border-violet-500/25",
+      PREPARING:"border-amber-500/25", APPLIED:"border-blue-500/25", SHORTLISTED:"border-indigo-500/25",
+      INTERVIEW:"border-orange-500/25", ACCEPTED:"border-emerald-500/30", REJECTED:"border-red-500/25",
+    };
+    const URGENCY_BADGE = {
+      CRITICAL:"bg-red-500/12 text-red-700 dark:text-red-300 border border-red-500/30",
+      URGENT:"bg-orange-500/12 text-orange-700 dark:text-orange-300 border border-orange-500/30",
+      PRIORITY:"bg-amber-500/12 text-amber-700 dark:text-amber-300 border border-amber-500/30",
+      PREPARE:"bg-yellow-500/12 text-yellow-700 dark:text-yellow-300 border border-yellow-500/30",
+      PLAN:"bg-sky-500/12 text-sky-700 dark:text-sky-300 border border-sky-500/30",
+      ROLLING:"bg-muted/60 text-muted-foreground border border-foreground/10",
+      CLOSED:"bg-foreground/8 text-muted-foreground border border-foreground/10",
+    };
+
+    let lifecycleMap = {}, opportunityCache = {}, activeStageFilter = "ALL", editingOppId = null, editingStage = null;
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    document.addEventListener("DOMContentLoaded", async () => {
+      const user = await requireAuth(); if (!user) return;
+      renderHeader(user); initMarqueeTicker();
+      document.getElementById("current-month").textContent = new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"});
+      await loadAll();
+      setupModalListeners();
+    });
+
+    async function loadAll() {
+      try {
+        const res = await fetch("/api/user/lifecycle");
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        lifecycleMap = data.lifecycle || {};
+
+        const oppIds = Object.keys(lifecycleMap);
+        if (oppIds.length === 0) { showEmpty(); renderMeta(); return; }
+
+        const oppsRes = await fetch("/api/opportunities/by-ids", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ ids: oppIds })
+        });
+        if (oppsRes.ok) {
+          const opps = await oppsRes.json();
+          opps.forEach(o => { opportunityCache[String(o.id || o._id)] = o; });
+        }
+        renderMeta(); renderCards();
+      } catch (err) { console.error("Tracker load error:", err); }
+    }
+
+    function renderMeta() { renderStatsRow(); renderPipelineBar(); renderStageTabs(); }
+
+    function renderStatsRow() {
+      const entries = Object.values(lifecycleMap);
+      const c = {};
+      STAGES.forEach(s => c[s] = 0);
+      entries.forEach(e => { if (e.stage) c[e.stage]++; });
+      const stats = [
+        { label:"Tracked",     val:entries.length,                                            clr:"text-foreground" },
+        { label:"In pipeline", val:c.PREPARING+c.APPLIED+c.SHORTLISTED+c.INTERVIEW,           clr:"text-blue-600" },
+        { label:"Interviews",  val:c.SHORTLISTED+c.INTERVIEW,                                 clr:"text-indigo-600" },
+        { label:"Accepted",    val:c.ACCEPTED,                                                 clr:"text-emerald-600" },
+      ];
+      document.getElementById("stats-row").innerHTML = stats.map(s => `
+        <div class="text-center px-4 py-2 bg-card border-2 border-foreground/10 rounded-2xl min-w-[72px]">
+          <div class="font-display text-3xl leading-none ${s.clr}">${s.val}</div>
+          <div class="font-mono text-[8px] uppercase tracking-widest text-muted-foreground mt-0.5">${s.label}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderPipelineBar() {
+      const funnelStages = ["SAVED","INTERESTED","PREPARING","APPLIED","SHORTLISTED","INTERVIEW","ACCEPTED"];
+      const entries = Object.values(lifecycleMap);
+      const c = {}; entries.forEach(e => { c[e.stage] = (c[e.stage]||0)+1; });
+      const maxVal = Math.max(1, ...funnelStages.map(s => c[s]||0));
+      document.getElementById("pipeline-bar").innerHTML = funnelStages.map((s,i) => {
+        const n = c[s]||0;
+        const pct = Math.round((n/maxVal)*100);
+        return `
+          <div class="flex-1 flex flex-col items-center gap-1 min-w-0">
+            <div class="w-full bg-foreground/8 rounded-sm overflow-hidden h-2">
+              <div class="h-full rounded-sm transition-all duration-700" style="width:${pct}%;background:var(--primary);opacity:${0.35+pct/180}"></div>
+            </div>
+            <div class="font-mono text-[8px] uppercase tracking-wider text-muted-foreground w-full text-center">${s.slice(0,4)}${n>0?` <b class="text-foreground">${n}</b>`:""}</div>
+          </div>
+          ${i < funnelStages.length-1 ? '<div class="text-foreground/25 text-xs self-start mt-0.5">›</div>' : ''}
+        `;
+      }).join("");
+    }
+
+    function renderStageTabs() {
+      const entries = Object.values(lifecycleMap);
+      const c = { ALL: entries.length }; STAGES.forEach(s => c[s]=entries.filter(e=>e.stage===s).length);
+      const tabs = [{ key:"ALL", label:"All" }, ...STAGES.map(s=>({ key:s, label:s[0]+s.slice(1).toLowerCase() }))];
+      document.getElementById("stage-tabs").innerHTML = tabs
+        .filter(t => t.key==="ALL" || c[t.key]>0)
+        .map(t => `
+          <button class="stage-tab shrink-0 px-4 py-1.5 rounded-lg font-mono text-[10px] font-bold uppercase border-2 transition-all
+            ${t.key===activeStageFilter ? 'bg-foreground text-background border-foreground' : 'border-foreground/15 text-foreground/60 hover:border-foreground/40 hover:text-foreground'}"
+            data-stage="${t.key}">
+            ${t.label}${c[t.key]>0?` <span class="opacity-70 text-[8px]">${c[t.key]}</span>`:""}
+          </button>
+        `).join("");
+      document.getElementById("stage-tabs").querySelectorAll(".stage-tab").forEach(btn => {
+        btn.addEventListener("click", () => { activeStageFilter=btn.dataset.stage; renderMeta(); renderCards(); });
+      });
+    }
+
+    function renderCards() {
+      const container = document.getElementById("cards-container");
+      const empty = document.getElementById("empty-state");
+      let entries = Object.values(lifecycleMap);
+      if (activeStageFilter !== "ALL") entries = entries.filter(e=>e.stage===activeStageFilter);
+      entries.sort((a,b) => {
+        const aT = ["ACCEPTED","REJECTED"].includes(a.stage), bT = ["ACCEPTED","REJECTED"].includes(b.stage);
+        if (aT !== bT) return aT ? 1 : -1;
+        const ai = STAGES.indexOf(a.stage), bi = STAGES.indexOf(b.stage);
+        if (bi !== ai) return bi-ai;
+        return new Date(b.stage_updated_at||0) - new Date(a.stage_updated_at||0);
+      });
+      if (entries.length === 0) { container.classList.add("hidden"); empty.classList.remove("hidden"); return; }
+      container.classList.remove("hidden"); empty.classList.add("hidden");
+      container.innerHTML = entries.map(renderCard).join("");
+      container.querySelectorAll(".edit-card-btn").forEach(btn => btn.addEventListener("click", ()=>openModal(btn.dataset.id)));
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function renderCard(entry) {
+      const opp = opportunityCache[entry.opportunityId] || {};
+      const info = typeof getDeadlineInfo === "function" ? getDeadlineInfo(opp.deadline) : {};
+      const sBadge = STAGE_BADGE[entry.stage] || STAGE_BADGE.DISCOVERED;
+      const sBorder = STAGE_BORDER[entry.stage] || "border-foreground/15";
+      const sIcon = STAGE_ICONS[entry.stage] || "circle";
+      const uBadge = URGENCY_BADGE[info.urgencyLevel] || URGENCY_BADGE.ROLLING;
+      const stageIdx = STAGES.indexOf(entry.stage);
+      const stageBar = STAGES.filter(s=>!["ACCEPTED","REJECTED"].includes(s)).map((s,i) => {
+        const done = STAGES.indexOf(entry.stage) > i;
+        const cur = entry.stage === s;
+        return `<span class="inline-block size-1.5 rounded-full ${cur?"bg-primary scale-125":done?"bg-primary/50":"bg-foreground/15"}"></span>`;
+      }).join("");
+
+      const metaItems = [
+        entry.application_date ? `<span class="flex items-center gap-1"><i data-lucide="calendar" class="size-3"></i>${new Date(entry.application_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</span>` : "",
+        entry.resume_version ? `<span class="flex items-center gap-1"><i data-lucide="file-text" class="size-3"></i>${entry.resume_version}</span>` : "",
+        entry.follow_up_date ? `<span class="flex items-center gap-1 text-amber-600 dark:text-amber-400"><i data-lucide="bell" class="size-3"></i>${entry.follow_up_date}</span>` : "",
+      ].filter(Boolean).join("");
+
+      return `
+        <div class="tracker-card p-5 bg-card border-2 ${sBorder} rounded-2xl">
+          <div class="flex flex-col sm:flex-row gap-4 sm:items-start justify-between">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap mb-2">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase ${sBadge}">
+                  <i data-lucide="${sIcon}" class="size-2.5"></i>${entry.stage}
+                </span>
+                ${opp.category ? `<span class="px-2 py-0.5 bg-muted rounded-full font-mono text-[9px] uppercase text-muted-foreground">${opp.category}</span>` : ""}
+                ${opp.deadline ? `<span class="px-2 py-0.5 rounded-full font-mono text-[9px] uppercase font-bold ${uBadge}">${info.urgencyLevel||"??"} · ${info.timeRemaining||"–"}</span>` : ""}
+              </div>
+              <h3 class="font-display text-xl uppercase tracking-tight leading-tight">${opp.title || "Unknown Opportunity"}</h3>
+              <div class="font-mono text-[10px] uppercase text-muted-foreground mt-0.5">${opp.organization || entry.opportunityId}</div>
+              ${metaItems ? `<div class="flex flex-wrap gap-x-4 gap-y-0.5 mt-2 font-mono text-[10px] text-muted-foreground">${metaItems}</div>` : ""}
+              ${entry.notes ? `<div class="mt-2 font-mono text-[10px] text-muted-foreground border-l-2 border-primary/30 pl-2 line-clamp-2 italic">${entry.notes}</div>` : ""}
+            </div>
+            <div class="flex flex-col items-end gap-2 shrink-0">
+              <button class="edit-card-btn px-4 py-2 border-2 border-foreground rounded-xl font-mono text-[10px] font-bold uppercase hover:bg-foreground hover:text-background transition-all" data-id="${entry.opportunityId}">Edit</button>
+              <a href="/opportunity/${entry.opportunityId}" class="px-4 py-2 bg-foreground text-background border-2 border-foreground rounded-xl font-mono text-[10px] font-bold uppercase hover:bg-primary hover:border-primary transition-all text-center">View</a>
+            </div>
+          </div>
+          <div class="mt-3 pt-3 border-t border-foreground/8 flex items-center gap-1.5">
+            <div class="flex items-center gap-0.5">${stageBar}</div>
+            <span class="font-mono text-[9px] text-muted-foreground ml-2">Updated ${relTime(entry.stage_updated_at)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // ── Modal ─────────────────────────────────────────────────────────────────
+    function openModal(oppId) {
+      editingOppId = oppId;
+      const entry = lifecycleMap[oppId] || { stage:"DISCOVERED" };
+      const opp = opportunityCache[oppId] || {};
+      editingStage = entry.stage;
+      document.getElementById("modal-subtitle").textContent = opp.organization || oppId;
+      document.getElementById("modal-title").textContent = opp.title || "Unknown Opportunity";
+      document.getElementById("modal-notes").value = entry.notes || "";
+      document.getElementById("notes-char").textContent = (entry.notes||"").length;
+      document.getElementById("modal-resume").value = entry.resume_version || "";
+      document.getElementById("modal-followup").value = entry.follow_up_date || "";
+      document.getElementById("modal-appdate").value = entry.application_date ? entry.application_date.slice(0,10) : "";
+      renderModalStageGrid(editingStage);
+      updateAppDateVisibility(editingStage);
+      const history = entry.history || [];
+      if (history.length > 0) {
+        document.getElementById("modal-history-wrap").classList.remove("hidden");
+        document.getElementById("modal-history").innerHTML = history.slice().reverse().map(h => `
+          <div class="flex items-center gap-2 font-mono text-[10px]">
+            <span class="px-1.5 py-px rounded text-[8px] font-bold uppercase ${STAGE_BADGE[h.stage]||''}">${h.stage}</span>
+            <span class="text-muted-foreground">${new Date(h.at).toLocaleDateString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
+          </div>
+        `).join("");
+      } else { document.getElementById("modal-history-wrap").classList.add("hidden"); }
+      document.getElementById("modal-backdrop").classList.remove("hidden");
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function renderModalStageGrid(selected) {
+      const grid = document.getElementById("modal-stage-grid");
+      grid.innerHTML = STAGES.map(s => `
+        <button class="modal-stage-btn flex flex-col items-center gap-1 px-2 py-2.5 rounded-xl border-2 font-mono text-[9px] uppercase font-bold transition-all
+          ${s===selected ? 'border-foreground bg-foreground text-background' : 'border-foreground/15 hover:border-foreground/40 text-foreground'}"
+          data-stage="${s}">
+          <i data-lucide="${STAGE_ICONS[s]||"circle"}" class="size-3.5"></i>
+          <span class="truncate w-full text-center leading-tight">${s[0]+s.slice(1).toLowerCase()}</span>
+        </button>
+      `).join("");
+      grid.querySelectorAll(".modal-stage-btn").forEach(btn => {
+        btn.addEventListener("click", () => { editingStage=btn.dataset.stage; renderModalStageGrid(editingStage); updateAppDateVisibility(editingStage); if(window.lucide) window.lucide.createIcons(); });
+      });
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function updateAppDateVisibility(stage) {
+      const w = document.getElementById("modal-appdate-wrap");
+      ["APPLIED","SHORTLISTED","INTERVIEW","ACCEPTED","REJECTED"].includes(stage) ? w.classList.remove("hidden") : w.classList.add("hidden");
+    }
+
+    function setupModalListeners() {
+      document.getElementById("modal-close").addEventListener("click", closeModal);
+      document.getElementById("modal-backdrop").addEventListener("click", e => { if(e.target===document.getElementById("modal-backdrop")) closeModal(); });
+      document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
+      document.getElementById("modal-notes").addEventListener("input", e => { document.getElementById("notes-char").textContent = e.target.value.length; });
+
+      document.getElementById("modal-save").addEventListener("click", async () => {
+        const btn = document.getElementById("modal-save");
+        btn.textContent = "Saving…"; btn.disabled = true;
+        const appDateVal = document.getElementById("modal-appdate").value;
+        const payload = {
+          id: editingOppId, stage: editingStage,
+          notes: document.getElementById("modal-notes").value,
+          resume_version: document.getElementById("modal-resume").value,
+          follow_up_date: document.getElementById("modal-followup").value || null,
+          ...(appDateVal ? { application_date: new Date(appDateVal).toISOString() } : {})
+        };
+        try {
+          const res = await fetch("/api/user/lifecycle/update", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+          if (res.ok) {
+            const d = await res.json();
+            lifecycleMap[editingOppId] = d.lifecycle;
+            closeModal(); renderMeta(); renderCards();
+          } else { const e = await res.json(); alert(e.error||"Failed to save"); }
+        } catch { alert("Network error"); }
+        finally { btn.textContent="Save Changes"; btn.disabled=false; }
+      });
+
+      document.getElementById("modal-remove").addEventListener("click", async () => {
+        if (!confirm("Remove from tracker? This cannot be undone.")) return;
+        try {
+          const res = await fetch(`/api/user/lifecycle/${editingOppId}`, { method:"DELETE" });
+          if (res.ok) { delete lifecycleMap[editingOppId]; closeModal(); renderMeta(); renderCards(); }
+        } catch { alert("Network error"); }
+      });
+    }
+
+    function closeModal() { document.getElementById("modal-backdrop").classList.add("hidden"); editingOppId=null; editingStage=null; }
+
+    function relTime(iso) {
+      if (!iso) return "–";
+      const diff = Date.now() - new Date(iso).getTime();
+      const m = Math.floor(diff/60000);
+      if (m<1) return "just now"; if (m<60) return `${m}m ago`;
+      const h = Math.floor(m/60); if (h<24) return `${h}h ago`;
+      const d = Math.floor(h/24); if (d<30) return `${d}d ago`;
+      return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric"});
+    }
+  </script>
+</body>
+</html>

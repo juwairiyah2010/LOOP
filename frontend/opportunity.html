@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <link rel="dns-prefetch" href="https://fonts.googleapis.com">
@@ -37,11 +38,13 @@
     }
   </script>
 </head>
+
 <body class="min-h-screen bg-background text-foreground">
 
   <!-- Sticky Ticker Banner -->
   <div class="sticky top-0 z-50 bg-primary text-primary-foreground py-1.5 overflow-hidden border-b-2 border-foreground">
-    <div id="marquee-ticker" class="marquee-content gap-10 whitespace-nowrap font-mono text-[11px] font-bold uppercase tracking-tight">
+    <div id="marquee-ticker"
+      class="marquee-content gap-10 whitespace-nowrap font-mono text-[11px] font-bold uppercase tracking-tight">
       <span class="inline-flex items-center gap-3">
         <span>LOOP · Loading opportunities</span>
         <span class="opacity-50">✦</span>
@@ -61,13 +64,16 @@
 
   <!-- Main Container -->
   <main class="max-w-4xl mx-auto px-6 py-10 lg:py-14 animate-entry">
-    
-    <a href="/" class="inline-flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground mb-8">
+
+    <a href="/"
+      class="inline-flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground mb-8">
       <i data-lucide="arrow-left" class="size-3.5"></i> Back to feed
     </a>
 
-    <div id="detail-card" class="bg-card border-2 border-foreground rounded-3xl p-6 md:p-10 shadow-stamp-lg flex flex-col gap-6 md:gap-8">
-      <div class="text-center font-mono text-xs uppercase text-muted-foreground py-10">Loading opportunity details...</div>
+    <div id="detail-card"
+      class="bg-card border-2 border-foreground rounded-3xl p-6 md:p-10 shadow-stamp-lg flex flex-col gap-6 md:gap-8">
+      <div class="text-center font-mono text-xs uppercase text-muted-foreground py-10">Loading opportunity details...
+      </div>
     </div>
 
   </main>
@@ -77,7 +83,8 @@
     <div class="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-start gap-6">
       <div>
         <div class="font-display text-3xl uppercase tracking-tighter italic">LOOP.</div>
-        <p class="font-mono text-[10px] uppercase text-muted-foreground tracking-widest mt-2">v.03 — built for the curious</p>
+        <p class="font-mono text-[10px] uppercase text-muted-foreground tracking-widest mt-2">v.03 — built for the
+          curious</p>
       </div>
       <div class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
         © 2026 · No more missed deadlines.
@@ -287,15 +294,15 @@
                 </div>
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   ${[
-                    { key: "skills", label: "Skills", weight: "25%", val: breakdown.skills?.score || 0 },
-                    { key: "interests", label: "Interests", weight: "15%", val: breakdown.interests?.score || 0 },
-                    { key: "category", label: "Category", weight: "15%", val: breakdown.category?.score || 0 },
-                    { key: "location", label: "Location", weight: "15%", val: breakdown.location?.score || 0 },
-                    { key: "experience", label: "Experience", weight: "10%", val: breakdown.experience?.score || 0 },
-                    { key: "behavior", label: "Behavior", weight: "10%", val: breakdown.behavior?.score || 0 },
-                    { key: "urgency", label: "Urgency", weight: "5%", val: breakdown.urgency?.score || 0 },
-                    { key: "recency", label: "Recency", weight: "5%", val: breakdown.recency?.score || 0 },
-                  ].map(dim => `
+              { key: "skills", label: "Skills", weight: "25%", val: breakdown.skills?.score || 0 },
+              { key: "interests", label: "Interests", weight: "15%", val: breakdown.interests?.score || 0 },
+              { key: "category", label: "Category", weight: "15%", val: breakdown.category?.score || 0 },
+              { key: "location", label: "Location", weight: "15%", val: breakdown.location?.score || 0 },
+              { key: "experience", label: "Experience", weight: "10%", val: breakdown.experience?.score || 0 },
+              { key: "behavior", label: "Behavior", weight: "10%", val: breakdown.behavior?.score || 0 },
+              { key: "urgency", label: "Urgency", weight: "5%", val: breakdown.urgency?.score || 0 },
+              { key: "recency", label: "Recency", weight: "5%", val: breakdown.recency?.score || 0 },
+            ].map(dim => `
                     <div class="p-3 bg-card border border-foreground/15 rounded-xl flex flex-col justify-between">
                       <div class="flex justify-between items-start">
                         <span class="font-mono text-[10px] uppercase font-bold text-muted-foreground">${dim.label}</span>
@@ -421,4 +428,5 @@
     });
   </script>
 </body>
+
 </html>

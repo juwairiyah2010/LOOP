@@ -22,7 +22,42 @@ async function requireAuth() {
   return user;
 }
 
-// Full structured deadline info — PLAN | PREPARE | PRIORITY | URGENT | CRITICAL | CLOSED | ROLLING
+// Application lifecycle stages in order
+// DISCOVERED → SAVED → INTERESTED → PREPARING → APPLIED → SHORTLISTED → INTERVIEW → ACCEPTED | REJECTED
+const LIFECYCLE_STAGES = [
+  "DISCOVERED", "SAVED", "INTERESTED", "PREPARING",
+  "APPLIED", "SHORTLISTED", "INTERVIEW", "ACCEPTED", "REJECTED"
+];
+
+const LIFECYCLE_META = {
+  DISCOVERED:  { icon: "search",        color: "text-foreground/50",                badge: "bg-foreground/8 text-foreground/60 border-foreground/15",  label: "Discovered"  },
+  SAVED:       { icon: "bookmark",      color: "text-sky-600 dark:text-sky-400",    badge: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30",    label: "Saved"       },
+  INTERESTED:  { icon: "heart",         color: "text-violet-600",                   badge: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30", label: "Interested"  },
+  PREPARING:   { icon: "file-text",     color: "text-amber-600",                    badge: "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30",  label: "Preparing"   },
+  APPLIED:     { icon: "send",          color: "text-blue-600",                     badge: "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30",    label: "Applied"     },
+  SHORTLISTED: { icon: "list-checks",   color: "text-indigo-600",                   badge: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/30", label: "Shortlisted" },
+  INTERVIEW:   { icon: "mic",           color: "text-orange-600",                   badge: "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/30", label: "Interview"   },
+  ACCEPTED:    { icon: "circle-check",  color: "text-emerald-600",                  badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30", label: "Accepted"    },
+  REJECTED:    { icon: "circle-x",      color: "text-red-500",                      badge: "bg-red-500/10 text-red-700 dark:text-red-300 border-red-500/30",      label: "Rejected"    },
+};
+
+// Get the lifecycle entry for an opportunity from the lifecycle map
+// Returns null if not tracked yet
+function getLifecycleEntry(lifecycleMap, oppId) {
+  if (!lifecycleMap || !oppId) return null;
+  return lifecycleMap[String(oppId)] || null;
+}
+
+// Render a compact lifecycle stage badge for use in cards
+function renderLifecycleBadge(entry) {
+  if (!entry || !entry.stage) return "";
+  const meta = LIFECYCLE_META[entry.stage] || LIFECYCLE_META.DISCOVERED;
+  return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase border ${meta.badge}">
+    <i data-lucide="${meta.icon}" class="size-2.5"></i>${meta.label}
+  </span>`;
+}
+
+
 // Source of truth: stored deadlineStr only. Never invents or estimates deadlines.
 function getDeadlineInfo(deadlineStr) {
   if (!deadlineStr) {
@@ -517,6 +552,7 @@ function renderHeader(user) {
         <a href="/" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Feed</a>
         <a href="/calendar" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Calendar</a>
         <a href="/saved" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Saved</a>
+        <a href="/tracker" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Tracker</a>
         <a href="/profile" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Profile</a>
         <button id="logout-btn" class="px-4 py-2 border-2 border-foreground rounded-full font-mono text-[11px] font-bold uppercase tracking-tight hover:bg-foreground hover:text-background transition-all">Log Out</button>
       </div>

@@ -377,7 +377,8 @@ app.get("/api/user/profile", requireAuth, async (req, res) => {
       saved: extractStringIds(dbUser.saved),
       interested: extractStringIds(dbUser.interested),
       passed: extractStringIds(dbUser.passed),
-      applied: extractStringIds(dbUser.applied)
+      applied: extractStringIds(dbUser.applied),
+      lifecycle: dbUser.lifecycle || {}
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -541,6 +542,7 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
       interested: extractStringIds(dbUser.interested),
       passed: extractStringIds(dbUser.passed),
       applied: extractStringIds(dbUser.applied),
+      lifecycle: dbUser.lifecycle || {},
       opportunities: results,
       watchlist,
     });
@@ -755,8 +757,156 @@ app.post("/api/user/applied/toggle", requireAuth, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// OPPORTUNITIES ENDPOINTS
+// APPLICATION LIFECYCLE ENDPOINTS
+// DISCOVERED → SAVED → INTERESTED → PREPARING → APPLIED →
+// SHORTLISTED → INTERVIEW → ACCEPTED | REJECTED
 // ----------------------------------------------------------------------
+
+const LIFECYCLE_STAGES = [
+  "DISCOVERED", "SAVED", "INTERESTED", "PREPARING",
+  "APPLIED", "SHORTLISTED", "INTERVIEW", "ACCEPTED", "REJECTED"
+];
+
+// Update (or create) a lifecycle entry for an opportunity
+app.post("/api/user/lifecycle/update", requireAuth, async (req, res) => {
+  try {
+    const { users, dbUser } = await getDbUser(req.user.userId);
+    const {
+      id,           // opportunity ID (required)
+      stage,        // one of LIFECYCLE_STAGES (required)
+      notes,        // optional string
+      follow_up_date, // optional ISO date string
+      resume_version, // optional string
+      application_date // optional ISO date string (defaults to now when moving to APPLIED)
+    } = req.body;
+
+    if (!id) return res.status(400).json({ error: "Opportunity ID required" });
+    if (!stage || !LIFECYCLE_STAGES.includes(stage)) {
+      return res.status(400).json({ error: `Stage must be one of: ${LIFECYCLE_STAGES.join(", ")}` });
+    }
+
+    const strId = String(id);
+    const now = new Date().toISOString();
+
+    // Read existing lifecycle entry (default to empty object)
+    const existingLifecycle = dbUser.lifecycle || {};
+    const existing = existingLifecycle[strId] || {};
+
+    // Build updated entry — preserve existing fields unless overridden
+    const updated = {
+      opportunityId: strId,
+      stage,
+      discovered_at: existing.discovered_at || now,
+      stage_updated_at: now,
+      notes: notes !== undefined ? String(notes).slice(0, 2000) : (existing.notes || ""),
+      follow_up_date: follow_up_date !== undefined ? follow_up_date : (existing.follow_up_date || null),
+      resume_version: resume_version !== undefined ? String(resume_version).slice(0, 200) : (existing.resume_version || ""),
+      // Only set application_date when moving to/past APPLIED stage
+      application_date: (["APPLIED", "SHORTLISTED", "INTERVIEW", "ACCEPTED", "REJECTED"].includes(stage))
+        ? (application_date || existing.application_date || now)
+        : (existing.application_date || null),
+      // Track stage history (append only, max 50 entries)
+      history: [
+        ...(existing.history || []).slice(-49),
+        { stage, at: now }
+      ]
+    };
+
+    // Persist into lifecycle map at lifecycle.<strId>
+    await users.updateOne(
+      { _id: toObjectId(req.user.userId) },
+      { $set: { [`lifecycle.${strId}`]: updated } }
+    );
+
+    // Keep legacy lists in sync for backward compatibility:
+    // SAVED → add to saved list
+    if (stage === "SAVED") {
+      await users.updateOne({ _id: toObjectId(req.user.userId) }, { $addToSet: { saved: strId } });
+    }
+    // INTERESTED → add to interested list  
+    if (stage === "INTERESTED") {
+      await users.updateOne({ _id: toObjectId(req.user.userId) }, { $addToSet: { interested: strId } });
+    }
+    // APPLIED or beyond → ensure entry exists in applied list
+    if (["APPLIED", "SHORTLISTED", "INTERVIEW", "ACCEPTED", "REJECTED"].includes(stage)) {
+      const appliedList = dbUser.applied || [];
+      const alreadyApplied = appliedList.some(item =>
+        typeof item === "object" && item !== null
+          ? (item.opportunityId === strId || item.id === strId)
+          : String(item) === strId
+      );
+      if (!alreadyApplied) {
+        await users.updateOne(
+          { _id: toObjectId(req.user.userId) },
+          { $push: { applied: { opportunityId: strId, applied_at: updated.application_date } } }
+        );
+      }
+    }
+
+    return res.json({ success: true, lifecycle: updated });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// Get the full lifecycle map for the current user
+app.get("/api/user/lifecycle", requireAuth, async (req, res) => {
+  try {
+    const { dbUser } = await getDbUser(req.user.userId);
+    const lifecycle = dbUser.lifecycle || {};
+    res.setHeader("Cache-Control", "private, max-age=10");
+    return res.json({ lifecycle });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// Get lifecycle entry for a single opportunity
+app.get("/api/user/lifecycle/:oppId", requireAuth, async (req, res) => {
+  try {
+    const { dbUser } = await getDbUser(req.user.userId);
+    const lifecycle = dbUser.lifecycle || {};
+    const entry = lifecycle[req.params.oppId] || null;
+    res.setHeader("Cache-Control", "private, max-age=10");
+    return res.json({ lifecycle: entry });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a lifecycle entry (removes from all legacy lists too)
+app.delete("/api/user/lifecycle/:oppId", requireAuth, async (req, res) => {
+  try {
+    const { users, dbUser } = await getDbUser(req.user.userId);
+    const strId = req.params.oppId;
+    const lifecycle = { ...(dbUser.lifecycle || {}) };
+    delete lifecycle[strId];
+
+    await users.updateOne(
+      { _id: toObjectId(req.user.userId) },
+      {
+        $set: { lifecycle },
+        $pull: {
+          saved: strId,
+          interested: strId,
+          passed: strId
+        }
+      }
+    );
+    // Remove from applied list (objects)
+    const appliedList = (dbUser.applied || []).filter(item =>
+      typeof item === "object" && item !== null
+        ? (item.opportunityId !== strId && item.id !== strId)
+        : String(item) !== strId
+    );
+    await users.updateOne({ _id: toObjectId(req.user.userId) }, { $set: { applied: appliedList } });
+
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 
 // Fetch Opportunities with category, keyword search, profile matching, and pagination
 app.post("/api/opportunities", async (req, res) => {
@@ -1238,6 +1388,10 @@ app.get("/saved", (req, res) => {
 
 app.get("/calendar", (req, res) => {
   res.sendFile(path.join(__dirname, "../../frontend/calendar.html"));
+});
+
+app.get("/tracker", (req, res) => {
+  res.sendFile(path.join(__dirname, "../../frontend/tracker.html"));
 });
 
 app.get("/opportunity/:id", (req, res) => {
