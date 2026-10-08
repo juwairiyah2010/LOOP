@@ -22,15 +22,83 @@ async function requireAuth() {
   return user;
 }
 
-// Format deadlines into relative days remaining
-function formatDeadline(deadlineStr) {
-  const diffTime = new Date(deadlineStr) - new Date();
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) return "Closed";
-  if (diffDays === 0) return "Closes today";
-  if (diffDays === 1) return "1 day left";
-  return `${diffDays} days left`;
+// Full structured deadline info — PLAN | PREPARE | PRIORITY | URGENT | CRITICAL | CLOSED | ROLLING
+// Source of truth: stored deadlineStr only. Never invents or estimates deadlines.
+function getDeadlineInfo(deadlineStr) {
+  if (!deadlineStr) {
+    return {
+      urgencyLevel: "ROLLING",
+      deadlineConfidence: "LOW",
+      daysLeft: null,
+      timeRemaining: "Rolling",
+      summary: "Rolling deadline — no fixed cut-off date stored",
+      recommendedAction: "Apply when ready; check the listing for submission windows",
+      badgeClass: "bg-muted/60 text-muted-foreground border-foreground/10"
+    };
+  }
+  const diffMs = new Date(deadlineStr).getTime() - Date.now();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  const COLORS = {
+    CRITICAL: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40",
+    URGENT:   "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/40",
+    PRIORITY: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40",
+    PREPARE:  "bg-yellow-500/15 text-yellow-700 dark:text-yellow-300 border-yellow-500/40",
+    PLAN:     "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/40",
+    CLOSED:   "bg-foreground/10 text-muted-foreground border-foreground/10"
+  };
+  let urgencyLevel, summary, recommendedAction, timeRemaining;
+  if (diffDays < 0) {
+    urgencyLevel = "CLOSED";
+    timeRemaining = `Closed ${Math.abs(diffDays)}d ago`;
+    summary = `Deadline passed ${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"} ago`;
+    recommendedAction = "Check if applications are still accepted or look for re-openings";
+  } else if (diffDays === 0) {
+    urgencyLevel = "CRITICAL"; timeRemaining = "Today";
+    summary = "Closes today — submit immediately";
+    recommendedAction = "Submit your application right now";
+  } else if (diffDays <= 3) {
+    urgencyLevel = "CRITICAL"; timeRemaining = `${diffDays}d left`;
+    summary = `Closes in ${diffDays} day${diffDays === 1 ? "" : "s"} — act now`;
+    recommendedAction = "Complete and submit your application today";
+  } else if (diffDays <= 7) {
+    urgencyLevel = "URGENT"; timeRemaining = `${diffDays}d left`;
+    summary = `Closes in ${diffDays} days — finalize application`;
+    recommendedAction = "Finalize materials and submit before the deadline";
+  } else if (diffDays <= 14) {
+    urgencyLevel = "PRIORITY"; timeRemaining = `${diffDays}d left`;
+    summary = `${diffDays} days remaining — begin application`;
+    recommendedAction = "Start your application now to allow revision time";
+  } else if (diffDays <= 30) {
+    urgencyLevel = "PREPARE"; timeRemaining = `${diffDays}d left`;
+    summary = `${diffDays} days remaining — gather materials`;
+    recommendedAction = "Collect documents, references, and draft your materials";
+  } else if (diffDays <= 90) {
+    urgencyLevel = "PLAN"; timeRemaining = `${diffDays}d left`;
+    summary = `${diffDays} days remaining — plan ahead`;
+    recommendedAction = "Add to calendar and plan your preparation timeline";
+  } else {
+    urgencyLevel = "PLAN"; timeRemaining = `${diffDays}d left`;
+    summary = `${diffDays} days remaining — distant deadline`;
+    recommendedAction = "Monitor for updates and begin long-term preparation";
+  }
+  return {
+    urgencyLevel,
+    deadlineConfidence: "HIGH",
+    daysLeft: diffDays,
+    timeRemaining,
+    summary,
+    recommendedAction,
+    badgeClass: COLORS[urgencyLevel] || COLORS.PLAN
+  };
 }
+
+// Backward-compatible deadline formatter (used by marquee ticker, calendar, etc.)
+function formatDeadline(deadlineStr) {
+  if (!deadlineStr) return "Rolling";
+  const info = getDeadlineInfo(deadlineStr);
+  return info.timeRemaining;
+}
+
 
 // Compute matching score based on user profile and opportunity tags
 function getMatchScore(profile, tags) {
@@ -100,30 +168,49 @@ function getWhyThisMatches(opp, profile = {}, interactions = {}) {
   const loc = opp.location || "Unspecified";
   const isRemote = workMode === "remote" || loc.toLowerCase().includes("remote") || loc.toLowerCase().includes("virtual");
 
-  let urgencyLevel = "Rolling";
-  let urgencySummary = "Rolling deadline with no fixed cut-off";
+  // Structured deadline urgency — PLAN | PREPARE | PRIORITY | URGENT | CRITICAL | CLOSED | ROLLING
+  // Source of truth: opp.deadline (stored field only). AI must never invent deadlines.
+  let urgencyLevel = "ROLLING";
+  let urgencySummary = "Rolling deadline — no fixed cut-off date stored";
+  let recommendedAction = "Apply when ready; check the listing for submission windows";
+  let deadlineConfidence = "LOW";
   let diffDays = null;
   if (opp.deadline) {
     const diffMs = new Date(opp.deadline).getTime() - Date.now();
     diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    deadlineConfidence = "HIGH";
     if (diffDays < 0) {
-      urgencyLevel = "Closed";
-      urgencySummary = `Deadline passed (${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"} ago)`;
+      urgencyLevel = "CLOSED";
+      urgencySummary = `Deadline passed ${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"} ago`;
+      recommendedAction = "Check if applications are still accepted or look for re-openings";
     } else if (diffDays === 0) {
-      urgencyLevel = "Closes today";
-      urgencySummary = "Closes today! Immediate action required";
+      urgencyLevel = "CRITICAL";
+      urgencySummary = "Closes today — submit immediately";
+      recommendedAction = "Submit your application right now";
     } else if (diffDays <= 3) {
-      urgencyLevel = "High urgency";
-      urgencySummary = `Closes in ${diffDays} day${diffDays === 1 ? "" : "s"} (high urgency)`;
+      urgencyLevel = "CRITICAL";
+      urgencySummary = `Closes in ${diffDays} day${diffDays === 1 ? "" : "s"} — act now`;
+      recommendedAction = "Complete and submit your application today";
     } else if (diffDays <= 7) {
-      urgencyLevel = "Closing this week";
-      urgencySummary = `Closes this week (${diffDays} days left)`;
-    } else if (diffDays <= 21) {
-      urgencyLevel = "Active window";
-      urgencySummary = `Active application window (${diffDays} days left)`;
+      urgencyLevel = "URGENT";
+      urgencySummary = `Closes in ${diffDays} days — finalize application`;
+      recommendedAction = "Finalize materials and submit before the deadline";
+    } else if (diffDays <= 14) {
+      urgencyLevel = "PRIORITY";
+      urgencySummary = `${diffDays} days remaining — begin application`;
+      recommendedAction = "Start your application now to allow revision time";
+    } else if (diffDays <= 30) {
+      urgencyLevel = "PREPARE";
+      urgencySummary = `${diffDays} days remaining — gather materials`;
+      recommendedAction = "Collect documents, references, and draft your materials";
+    } else if (diffDays <= 90) {
+      urgencyLevel = "PLAN";
+      urgencySummary = `${diffDays} days remaining — plan ahead`;
+      recommendedAction = "Add to calendar and plan your preparation timeline";
     } else {
-      urgencyLevel = "Open";
-      urgencySummary = `Open with ample time (${diffDays} days left)`;
+      urgencyLevel = "PLAN";
+      urgencySummary = `${diffDays} days remaining — distant deadline`;
+      recommendedAction = "Monitor for updates and begin long-term preparation";
     }
   }
 
@@ -214,9 +301,11 @@ function getWhyThisMatches(opp, profile = {}, interactions = {}) {
       summary: locationSummary
     },
     deadlineUrgency: {
-      deadline: opp.deadline,
+      deadline: opp.deadline || null,
       daysLeft: diffDays,
       urgencyLevel,
+      deadlineConfidence,
+      recommendedAction,
       summary: urgencySummary
     },
     relevantBehavior: {
@@ -274,7 +363,7 @@ function renderWhyThisMatchesSection(whyData, options = {}) {
           </div>
           <div class="flex items-start gap-1 text-foreground/80">
             <span class="text-primary font-bold shrink-0">⏱</span>
-            <span class="truncate" title="${why.deadlineUrgency?.summary || ''}"><strong class="uppercase text-[9px] text-muted-foreground">Urgency:</strong> ${why.deadlineUrgency?.urgencyLevel || 'Active'}</span>
+            <span class="truncate" title="${why.deadlineUrgency?.summary || ''} · ${why.deadlineUrgency?.recommendedAction || ''}"><strong class="uppercase text-[9px] text-muted-foreground">Deadline:</strong> ${why.deadlineUrgency?.urgencyLevel || 'ROLLING'} · ${why.deadlineUrgency?.daysLeft != null ? why.deadlineUrgency.daysLeft + 'd left' : 'Rolling'}</span>
           </div>
           <div class="flex items-start gap-1 text-foreground/80">
             <span class="text-primary font-bold shrink-0">👤</span>
@@ -350,14 +439,36 @@ function renderWhyThisMatchesSection(whyData, options = {}) {
         </div>
 
         <!-- 5. Deadline Urgency -->
-        <div class="p-3 rounded-xl bg-card border border-foreground/10 flex flex-col justify-between">
-          <div class="text-[9px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5 mb-1">
+        ${(() => {
+          const du = why.deadlineUrgency || {};
+          const lvl = du.urgencyLevel || "ROLLING";
+          const levelColors = {
+            CRITICAL: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40",
+            URGENT:   "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/40",
+            PRIORITY: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40",
+            PREPARE:  "bg-yellow-500/15 text-yellow-700 dark:text-yellow-300 border-yellow-500/40",
+            PLAN:     "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/40",
+            ROLLING:  "bg-muted/60 text-muted-foreground border-foreground/10",
+            CLOSED:   "bg-foreground/10 text-muted-foreground border-foreground/10"
+          };
+          const badgeCls = levelColors[lvl] || levelColors.ROLLING;
+          const confBadge = du.deadlineConfidence === "HIGH"
+            ? `<span class="ml-1.5 px-1.5 py-px rounded text-[8px] font-bold uppercase bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">Confirmed</span>`
+            : `<span class="ml-1.5 px-1.5 py-px rounded text-[8px] font-bold uppercase bg-muted/60 text-muted-foreground border border-foreground/10">Rolling</span>`;
+          return `
+        <div class="p-3 rounded-xl bg-card border border-foreground/10 flex flex-col gap-1.5">
+          <div class="text-[9px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5">
             <i data-lucide="clock" class="size-3 text-primary"></i> Deadline Urgency
           </div>
-          <div class="text-foreground leading-snug">
-            ${why.deadlineUrgency?.summary || "Rolling deadline"}
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="px-2 py-0.5 rounded-full font-mono text-[10px] font-bold uppercase border ${badgeCls}">${lvl}</span>
+            ${confBadge}
           </div>
+          <div class="text-foreground leading-snug text-[11px]">${du.summary || "Rolling deadline"}</div>
+          ${du.recommendedAction ? `<div class="text-[10px] font-mono text-primary/80 border-t border-foreground/10 pt-1.5">→ ${du.recommendedAction}</div>` : ""}
         </div>
+          `;
+        })()}
 
         <!-- 6. Relevant Behavior -->
         <div class="p-3 rounded-xl bg-card border border-foreground/10 flex flex-col justify-between">
