@@ -697,6 +697,11 @@
 
     // Initialization
     document.addEventListener("DOMContentLoaded", async () => {
+      const user = await getAuthUser();
+      if (!user || (!user.isAdmin && user.role !== "admin")) {
+        window.location.href = "/login?redirect=/admin";
+        return;
+      }
       initAuth();
       await loadStats();
       await loadSources();
