@@ -108,11 +108,20 @@ function generateId() {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
+function getPropertyByPath(obj, path) {
+  if (!obj || !path) return undefined;
+  if (!path.includes(".")) return obj[path];
+  return path.split(".").reduce((acc, part) => (acc && acc[part] !== undefined ? acc[part] : undefined), obj);
+}
+
 function matchQuery(item, query) {
   if (!query) return true;
   for (const [key, val] of Object.entries(query)) {
     if (key === "$or" && Array.isArray(val)) {
       const matched = val.some((subQuery) => matchQuery(item, subQuery));
+      if (!matched) return false;
+    } else if (key === "$and" && Array.isArray(val)) {
+      const matched = val.every((subQuery) => matchQuery(item, subQuery));
       if (!matched) return false;
     } else if (key === "$text") {
       // Simulate Atlas $text search in MockCollection via substring match
@@ -124,29 +133,54 @@ function matchQuery(item, query) {
       if (!searchTerms.every(term => haystack.includes(term))) return false;
     } else if (key === "_id") {
       if (String(item._id) !== String(val)) return false;
-    } else if (val && typeof val === "object") {
-      const entryVal = item[key];
-      if (val.$gte !== undefined) {
-        if (entryVal < val.$gte) return false;
-      }
-      if (val.$lte !== undefined) {
-        if (entryVal > val.$lte) return false;
-      }
-      if (val.$ne !== undefined) {
-        if (entryVal === val.$ne) return false;
-      }
-      if (val.$in !== undefined) {
-        if (!val.$in.includes(entryVal)) return false;
-      }
-      if (val.$exists !== undefined) {
-        const exists = key in item;
-        if (val.$exists !== exists) return false;
-      }
     } else {
-      if (Array.isArray(item[key])) {
-        if (!item[key].includes(val)) return false;
-      } else if (String(item[key]) !== String(val)) {
-        return false;
+      const entryVal = getPropertyByPath(item, key);
+      if (val instanceof RegExp) {
+        if (Array.isArray(entryVal)) {
+          if (!entryVal.some(v => val.test(String(v || "")))) return false;
+        } else {
+          if (!val.test(String(entryVal || ""))) return false;
+        }
+      } else if (val && typeof val === "object") {
+        if (val.$regex !== undefined) {
+          const flags = val.$options || "";
+          const re = new RegExp(val.$regex, flags);
+          if (Array.isArray(entryVal)) {
+            if (!entryVal.some(v => re.test(String(v || "")))) return false;
+          } else {
+            if (!re.test(String(entryVal || ""))) return false;
+          }
+        }
+        const compVal = entryVal instanceof Date ? entryVal.toISOString() : entryVal;
+        if (val.$gte !== undefined) {
+          if (compVal === undefined || compVal === null || compVal < val.$gte) return false;
+        }
+        if (val.$lte !== undefined) {
+          if (compVal === undefined || compVal === null || compVal > val.$lte) return false;
+        }
+        if (val.$ne !== undefined) {
+          if (entryVal === val.$ne) return false;
+        }
+        if (val.$in !== undefined) {
+          const inList = val.$in;
+          if (Array.isArray(entryVal)) {
+            const hasMatch = entryVal.some(ev => inList.some(target => target instanceof RegExp ? target.test(String(ev)) : String(ev).toLowerCase() === String(target).toLowerCase()));
+            if (!hasMatch) return false;
+          } else {
+            const hasMatch = inList.some(target => target instanceof RegExp ? target.test(String(entryVal)) : String(entryVal).toLowerCase() === String(target).toLowerCase());
+            if (!hasMatch) return false;
+          }
+        }
+        if (val.$exists !== undefined) {
+          const exists = entryVal !== undefined;
+          if (val.$exists !== exists) return false;
+        }
+      } else {
+        if (Array.isArray(entryVal)) {
+          if (!entryVal.map(String).includes(String(val))) return false;
+        } else if (String(entryVal) !== String(val)) {
+          return false;
+        }
       }
     }
   }

@@ -127,9 +127,20 @@
             />
             <i data-lucide="search" class="absolute left-3.5 top-3.5 size-4 text-muted-foreground"></i>
           </div>
-          <div id="ai-search-banner" class="hidden p-2.5 bg-primary/10 border border-primary/25 rounded-xl font-mono text-[9px] text-foreground/80 flex items-start justify-between gap-2">
-            <div id="ai-search-summary" class="flex-1 leading-tight"></div>
-            <button id="clear-ai-search" type="button" class="text-muted-foreground hover:text-foreground font-bold">✕</button>
+          <div id="ai-search-banner" class="hidden p-3 bg-primary/10 border-2 border-primary/30 rounded-xl font-mono text-[9px] text-foreground/90 flex flex-col gap-2">
+            <div class="flex items-start justify-between gap-2">
+              <div id="ai-search-summary" class="flex-1 leading-tight"></div>
+              <button id="clear-ai-search" type="button" class="text-muted-foreground hover:text-foreground font-bold text-xs">✕</button>
+            </div>
+          </div>
+          <div id="ai-example-prompts" class="hidden flex flex-col gap-1.5 pt-1">
+            <span class="font-mono text-[9px] text-muted-foreground uppercase tracking-widest font-bold">Try asking:</span>
+            <div class="flex flex-col gap-1">
+              <button type="button" class="ai-prompt-chip text-[9px] font-mono px-2 py-1.5 rounded-lg border border-foreground/20 hover:border-primary hover:bg-primary/10 transition-colors text-left" data-prompt="Remote AI internships for 3rd year CSE students">"Remote AI internships for 3rd year CSE students"</button>
+              <button type="button" class="ai-prompt-chip text-[9px] font-mono px-2 py-1.5 rounded-lg border border-foreground/20 hover:border-primary hover:bg-primary/10 transition-colors text-left" data-prompt="Java internships closing this week">"Java internships closing this week"</button>
+              <button type="button" class="ai-prompt-chip text-[9px] font-mono px-2 py-1.5 rounded-lg border border-foreground/20 hover:border-primary hover:bg-primary/10 transition-colors text-left" data-prompt="Hackathons near Delhi">"Hackathons near Delhi"</button>
+              <button type="button" class="ai-prompt-chip text-[9px] font-mono px-2 py-1.5 rounded-lg border border-foreground/20 hover:border-primary hover:bg-primary/10 transition-colors text-left" data-prompt="Scholarships I am eligible for">"Scholarships I am eligible for"</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1278,22 +1289,82 @@
       const aiSearchBanner = document.getElementById("ai-search-banner");
       const aiSearchSummary = document.getElementById("ai-search-summary");
       const clearAiSearch = document.getElementById("clear-ai-search");
+      const aiExamplePrompts = document.getElementById("ai-example-prompts");
+
+      async function executeAiSearch(queryText) {
+        if (!queryText || queryText.length < 3) return;
+        aiSearchBanner.classList.remove("hidden");
+        aiSearchSummary.innerHTML = `<span class="animate-pulse">✦ AI analyzing query into structured filters...</span>`;
+        if (typeof fetchAINaturalSearch === "function") {
+          const data = await fetchAINaturalSearch(queryText);
+          if (data && data.results) {
+            const filters = data.interpretedFilters || {};
+            const chips = [];
+            if (filters.category) chips.push(`<span class="px-1.5 py-0.5 rounded bg-primary/20 text-primary font-bold">Category: ${filters.category}</span>`);
+            if (filters.work_mode) chips.push(`<span class="px-1.5 py-0.5 rounded bg-primary/20 text-primary font-bold">Mode: ${filters.work_mode}</span>`);
+            if (filters.location) chips.push(`<span class="px-1.5 py-0.5 rounded bg-primary/20 text-primary font-bold">Location: ${filters.location}</span>`);
+            if (filters.skills?.length > 0) chips.push(`<span class="px-1.5 py-0.5 rounded bg-primary/20 text-primary font-bold">Skills: ${filters.skills.join(", ")}</span>`);
+            if (filters.maxDaysLeft) chips.push(`<span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 font-bold">Closing: ≤${filters.maxDaysLeft}d</span>`);
+            if (filters.education) {
+              const eduText = [
+                filters.education.yearOfStudy ? `${filters.education.yearOfStudy}${filters.education.yearOfStudy === 1 ? 'st' : filters.education.yearOfStudy === 2 ? 'nd' : filters.education.yearOfStudy === 3 ? 'rd' : 'th'} yr` : "",
+                filters.education.major || ""
+              ].filter(Boolean).join(" ");
+              chips.push(`<span class="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-600 font-bold">${eduText}</span>`);
+            }
+            if (filters.checkUserEligibility) chips.push(`<span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 font-bold">✓ Profile Eligibility Verified</span>`);
+
+            const chipsHtml = chips.length > 0 ? `<div class="flex flex-wrap gap-1 mt-1.5">${chips.join("")}</div>` : "";
+            const count = data.totalMatches ?? data.totalCount ?? data.results.length;
+
+            aiSearchSummary.innerHTML = `
+              <div class="font-bold flex items-center justify-between gap-2">
+                <span>✦ ${data.summary}</span>
+                <span class="text-primary text-[10px] whitespace-nowrap">${count} verified results</span>
+              </div>
+              ${chipsHtml}
+            `;
+            feedOpps = data.results;
+            renderSwipeStack();
+            renderFeedList();
+          } else {
+            aiSearchSummary.textContent = "No matching opportunities found for intent.";
+          }
+        }
+      }
 
       aiSearchToggle?.addEventListener("click", () => {
         isAiSearchMode = !isAiSearchMode;
         if (isAiSearchMode) {
           aiSearchToggleLabel.textContent = "AI Natural Mode (Active)";
           aiSearchToggle.className = "text-primary font-bold flex items-center gap-1 bg-primary/10 px-2 py-0.5 rounded-full border border-primary/30";
-          searchInput.placeholder = "e.g. remote python internships closing soon with stipend";
+          searchInput.placeholder = "e.g. Remote AI internships for 3rd year CSE students";
+          aiExamplePrompts?.classList.remove("hidden");
           searchInput.focus();
         } else {
           aiSearchToggleLabel.textContent = "Standard";
           aiSearchToggle.className = "text-muted-foreground hover:text-foreground font-bold flex items-center gap-1";
           searchInput.placeholder = "SEARCH KEYWORDS";
           aiSearchBanner.classList.add("hidden");
+          aiExamplePrompts?.classList.add("hidden");
           activeQuery = searchInput.value.trim();
           loadFeedOpportunities(true);
         }
+      });
+
+      // Prompt chip click event delegation
+      document.getElementById("ai-example-prompts")?.addEventListener("click", (e) => {
+        const btn = e.target.closest(".ai-prompt-chip");
+        if (!btn) return;
+        const promptText = btn.dataset.prompt;
+        if (!promptText) return;
+        searchInput.value = promptText;
+        if (!isAiSearchMode) {
+          isAiSearchMode = true;
+          aiSearchToggleLabel.textContent = "AI Natural Mode (Active)";
+          aiSearchToggle.className = "text-primary font-bold flex items-center gap-1 bg-primary/10 px-2 py-0.5 rounded-full border border-primary/30";
+        }
+        executeAiSearch(promptText);
       });
 
       clearAiSearch?.addEventListener("click", () => {
@@ -1309,19 +1380,7 @@
         const val = e.target.value.trim();
         searchTimeout = setTimeout(async () => {
           if (isAiSearchMode && val.length >= 3) {
-            aiSearchBanner.classList.remove("hidden");
-            aiSearchSummary.innerHTML = `<span class="animate-pulse">✦ AI analyzing query intent...</span>`;
-            if (typeof fetchAINaturalSearch === "function") {
-              const data = await fetchAINaturalSearch(val);
-              if (data && data.results) {
-                aiSearchSummary.innerHTML = `<strong>✦ ${data.summary}</strong> (${data.totalMatches} verified matches)`;
-                feedOpps = data.results;
-                renderSwipeStack();
-                renderFeedList();
-              } else {
-                aiSearchSummary.textContent = "No matching opportunities found for intent.";
-              }
-            }
+            executeAiSearch(val);
           } else {
             aiSearchBanner.classList.add("hidden");
             activeQuery = val;

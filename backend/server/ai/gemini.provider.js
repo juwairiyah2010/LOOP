@@ -313,19 +313,30 @@ export class GeminiAIProvider extends BaseAIProvider {
 
         Return JSON with:
         - "query": "${query}"
-        - "interpretedIntent": {
-            "categories": optional array (subset of ["internship", "scholarship", "hackathon", "fellowship", "competition"]),
-            "skills": optional array of skill keywords extracted from query,
-            "workModes": optional array of ["remote", "hybrid", "onsite"],
+        - "interpretedFilters": {
+            "category": optional string (e.g. "internship", "scholarship", "hackathon", "fellowship", "competition"),
+            "categories": optional array of category strings,
+            "skills": optional array of skill keywords extracted from query (e.g. ["AI"] or ["Java"]),
+            "work_mode": optional string ("remote", "hybrid", "onsite"),
+            "workModes": optional array of strings,
+            "location": optional location string (e.g. "Delhi" if "near Delhi"),
             "hasPrize": optional boolean,
-            "maxDaysLeft": optional number (e.g. 14 if "urgent" or "closing soon"),
-            "keywords": array of remaining significant search words
+            "maxDaysLeft": optional number (e.g. 7 if "closing this week", 14 if "soon", 30 if "this month"),
+            "education": optional object { "yearOfStudy": number or string, "major": string },
+            "checkUserEligibility": optional boolean (true if user asks for opportunities they are eligible for)
           }
         - "summary": 1 sentence summary of what the student is looking for
       `;
 
       const result = await this._callGeminiJson(prompt);
-      return result;
+      const filters = result.interpretedFilters || result.interpretedIntent || {};
+      return {
+        query,
+        interpretedFilters: filters,
+        interpretedIntent: filters,
+        summary: result.summary || `Interpreted search for "${query}"`,
+        _provider: this.getName()
+      };
     } catch (err) {
       console.warn("Gemini NL search failed, falling back to local provider:", err.message);
       return this.fallback.parseNaturalLanguageSearch(query);
