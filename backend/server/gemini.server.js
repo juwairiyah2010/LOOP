@@ -350,57 +350,13 @@ async function generateMockOpportunitiesLocally(userProfile) {
 // GEMINI PUBLIC ROUTE EXPORTS WITH FALLBACKS
 // ======================================================================
 
+import { aiService } from "./ai/index.js";
+
 /**
- * Analyzes resume base64 PDF
+ * Analyzes resume base64 PDF using LOOP AI Intelligence Layer
  */
 export async function analyzeResumePdf(base64Pdf) {
-  if (isPlaceholderKey) {
-    console.log("Gemini API key is placeholder. Analyzing resume locally...");
-    return analyzeResumeLocally(base64Pdf);
-  }
-
-  const prompt = `
-    Extract the following information from this resume and return exactly a JSON object.
-    Do not include markdown blocks or any other text.
-    Return ONLY a JSON object with these keys, all as arrays of strings:
-    - "skills" (general professional skills)
-    - "interests"
-    - "programmingLanguages"
-    - "frameworks"
-    - "tools"
-    - "technologies"
-    - "domains" (e.g. AI, Web Development, Cybersecurity, Finance, etc.)
-    - "preferredRoles" (e.g. Software Engineer, Product Manager, etc. inferred from past roles or summary)
-  `;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: [
-        {
-          inlineData: {
-            data: base64Pdf,
-            mimeType: "application/pdf",
-          },
-        },
-        prompt,
-      ],
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
-
-    let responseText = response.text;
-    if (!responseText) throw new Error("No response from Gemini API");
-
-    responseText = responseText.replace(/^```(?:json)?\n?/i, "").replace(/\n?```\n?$/i, "").trim();
-
-    const parsed = JSON.parse(responseText);
-    return parsed;
-  } catch (error) {
-    console.error("Gemini Resume Analysis Failed, using local fallback:", error.message);
-    return analyzeResumeLocally(base64Pdf);
-  }
+  return aiService.analyzeResume({ base64Pdf });
 }
 
 /**

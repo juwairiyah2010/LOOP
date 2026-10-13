@@ -109,17 +109,39 @@
           <button data-cat="hackathon" class="cat-btn px-3 py-1.5 border-2 border-foreground hover:bg-foreground/5 rounded-xl font-mono text-[10px] font-bold uppercase transition-all">Hackathon</button>
         </div>
 
-        <!-- Search Input -->
-        <div class="relative">
-          <input 
-            type="text" 
-            id="search-input" 
-            placeholder="SEARCH KEYWORDS" 
-            class="w-full bg-background border-2 border-foreground pl-10 pr-4 py-3 font-mono text-[10px] uppercase rounded-xl focus:outline-none focus:border-primary"
-          />
-          <i data-lucide="search" class="absolute left-3.5 top-3.5 size-4 text-muted-foreground"></i>
+        <!-- Search Input with AI Natural Search toggle -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between font-mono text-[9px] uppercase tracking-wider">
+            <span class="text-muted-foreground font-bold">Search Mode:</span>
+            <button id="ai-search-toggle" type="button" class="text-primary hover:underline font-bold flex items-center gap-1 transition-all">
+              <span class="size-3.5 rounded-full bg-primary/20 flex items-center justify-center text-[8px]">✦</span>
+              <span id="ai-search-toggle-label">Standard</span>
+            </button>
+          </div>
+          <div class="relative">
+            <input 
+              type="text" 
+              id="search-input" 
+              placeholder="SEARCH KEYWORDS OR PLAIN ENGLISH" 
+              class="w-full bg-background border-2 border-foreground pl-10 pr-4 py-3 font-mono text-[10px] uppercase rounded-xl focus:outline-none focus:border-primary transition-all"
+            />
+            <i data-lucide="search" class="absolute left-3.5 top-3.5 size-4 text-muted-foreground"></i>
+          </div>
+          <div id="ai-search-banner" class="hidden p-2.5 bg-primary/10 border border-primary/25 rounded-xl font-mono text-[9px] text-foreground/80 flex items-start justify-between gap-2">
+            <div id="ai-search-summary" class="flex-1 leading-tight"></div>
+            <button id="clear-ai-search" type="button" class="text-muted-foreground hover:text-foreground font-bold">✕</button>
+          </div>
         </div>
       </div>
+
+      <!-- Weekly AI Digest Button -->
+      <button id="open-digest-btn" type="button" class="w-full p-4 bg-primary text-primary-foreground border-2 border-foreground rounded-3xl shadow-stamp font-mono text-xs font-bold uppercase tracking-tight flex items-center justify-between hover:-translate-y-0.5 hover:shadow-stamp-lg transition-all animate-entry [animation-delay:120ms]">
+        <span class="flex items-center gap-2.5">
+          <span class="size-7 rounded-xl bg-background text-foreground flex items-center justify-center font-display text-base">✦</span>
+          <span class="text-left leading-tight">Weekly AI Digest<br><span class="text-[9px] opacity-80 font-normal">Personalized Briefing</span></span>
+        </span>
+        <span class="text-[9px] bg-foreground text-background px-2.5 py-1 rounded-full">Open →</span>
+      </button>
 
       <!-- Profile Card -->
       <a href="/profile" class="block animate-entry [animation-delay:160ms] p-6 bg-foreground text-background rounded-3xl hover:-translate-y-1 hover:shadow-stamp-lg transition-all shadow-stamp">
@@ -762,6 +784,7 @@
                 const data = await res.json();
                 if (data.interested) {
                   if (!profileData.interested.includes(oppId)) profileData.interested.push(oppId);
+                  trackBehavior("interested", currentOpp);
                 } else {
                   profileData.interested = profileData.interested.filter(id => id !== oppId);
                 }
@@ -775,6 +798,7 @@
               });
               if (res.ok) {
                 if (!profileData.passed.includes(oppId)) profileData.passed.push(oppId);
+                trackBehavior("passed", currentOpp);
                 updateFeedStatsIndicator();
               }
             }
@@ -968,25 +992,34 @@
                     ${renderMatchPie(score, 84, true)}
                   </div>
 
-                  <div class="flex md:flex-col gap-2 md:w-full">
-                    <a
-                      href="/opportunity/${opp.id}"
-                      class="flex-1 text-center py-2.5 bg-foreground text-background font-mono text-[11px] font-bold uppercase rounded-lg hover:bg-primary hover:text-primary-foreground transition-colors flex items-center justify-center"
-                    >
-                      View
-                    </a>
-                    <button
-                      type="button"
-                      class="save-toggle-btn flex items-center justify-center gap-2 shrink-0 py-2.5 px-4 rounded-lg border-2 border-foreground font-mono text-[11px] font-bold uppercase transition-colors ${isSaved ? 'bg-secondary text-secondary-foreground' : 'bg-card hover:bg-accent'}"
-                      data-id="${opp.id}"
-                    >
-                      ${isSaved ? `
-                        <i data-lucide="bookmark-check" class="size-4"></i> Saved
-                      ` : `
-                        <i data-lucide="bookmark" class="size-4"></i> Save
-                      `}
-                    </button>
-                  </div>
+                    <div class="flex md:flex-col gap-2 md:w-full">
+                      <a
+                        href="/opportunity/${opp.id}"
+                        class="flex-1 text-center py-2.5 bg-foreground text-background font-mono text-[11px] font-bold uppercase rounded-lg hover:bg-primary hover:text-primary-foreground transition-colors flex items-center justify-center"
+                      >
+                        View
+                      </a>
+                      <button
+                        type="button"
+                        class="save-toggle-btn flex items-center justify-center gap-2 shrink-0 py-2.5 px-4 rounded-lg border-2 border-foreground font-mono text-[11px] font-bold uppercase transition-colors ${isSaved ? 'bg-secondary text-secondary-foreground' : 'bg-card hover:bg-accent'}"
+                        data-id="${opp.id}"
+                      >
+                        ${isSaved ? `
+                          <i data-lucide="bookmark-check" class="size-4"></i> Saved
+                        ` : `
+                          <i data-lucide="bookmark" class="size-4"></i> Save
+                        `}
+                      </button>
+                      <button
+                        type="button"
+                        class="compare-toggle-btn flex items-center justify-center gap-1.5 shrink-0 py-2.5 px-3 rounded-lg border border-foreground/30 font-mono text-[10px] font-bold uppercase hover:bg-accent transition-colors"
+                        data-id="${opp.id}"
+                        title="Compare with another opportunity"
+                      >
+                        <i data-lucide="split" class="size-3.5"></i>
+                        <span>Compare</span>
+                      </button>
+                    </div>
                 </div>
               </div>
             </article>
@@ -1012,6 +1045,11 @@
           if (res.ok) {
             const data = await res.json();
             
+            // Track the save behavior
+            const savedOpp = feedOpps.find(o => String(o.id) === String(id)) ||
+                             (swipeQueue || []).find(o => String(o.id) === String(id));
+            if (savedOpp) trackBehavior(data.saved ? "saved" : "viewed", savedOpp);
+
             // Toggle local tracking
             if (data.saved) {
               if (!profileData.saved.includes(id)) profileData.saved.push(id);
@@ -1232,14 +1270,103 @@
         loadFeedOpportunities(true);
       });
 
-      // Search queries event listeners (debounced)
-      let searchTimeout = null;
-      document.getElementById("search-input").addEventListener("input", (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-          activeQuery = e.target.value.trim();
+      // Search queries event listeners (debounced with AI Natural Search support)
+      let isAiSearchMode = false;
+      const aiSearchToggle = document.getElementById("ai-search-toggle");
+      const aiSearchToggleLabel = document.getElementById("ai-search-toggle-label");
+      const searchInput = document.getElementById("search-input");
+      const aiSearchBanner = document.getElementById("ai-search-banner");
+      const aiSearchSummary = document.getElementById("ai-search-summary");
+      const clearAiSearch = document.getElementById("clear-ai-search");
+
+      aiSearchToggle?.addEventListener("click", () => {
+        isAiSearchMode = !isAiSearchMode;
+        if (isAiSearchMode) {
+          aiSearchToggleLabel.textContent = "AI Natural Mode (Active)";
+          aiSearchToggle.className = "text-primary font-bold flex items-center gap-1 bg-primary/10 px-2 py-0.5 rounded-full border border-primary/30";
+          searchInput.placeholder = "e.g. remote python internships closing soon with stipend";
+          searchInput.focus();
+        } else {
+          aiSearchToggleLabel.textContent = "Standard";
+          aiSearchToggle.className = "text-muted-foreground hover:text-foreground font-bold flex items-center gap-1";
+          searchInput.placeholder = "SEARCH KEYWORDS";
+          aiSearchBanner.classList.add("hidden");
+          activeQuery = searchInput.value.trim();
           loadFeedOpportunities(true);
-        }, 300);
+        }
+      });
+
+      clearAiSearch?.addEventListener("click", () => {
+        aiSearchBanner.classList.add("hidden");
+        searchInput.value = "";
+        activeQuery = "";
+        loadFeedOpportunities(true);
+      });
+
+      let searchTimeout = null;
+      searchInput.addEventListener("input", (e) => {
+        clearTimeout(searchTimeout);
+        const val = e.target.value.trim();
+        searchTimeout = setTimeout(async () => {
+          if (isAiSearchMode && val.length >= 3) {
+            aiSearchBanner.classList.remove("hidden");
+            aiSearchSummary.innerHTML = `<span class="animate-pulse">✦ AI analyzing query intent...</span>`;
+            if (typeof fetchAINaturalSearch === "function") {
+              const data = await fetchAINaturalSearch(val);
+              if (data && data.results) {
+                aiSearchSummary.innerHTML = `<strong>✦ ${data.summary}</strong> (${data.totalMatches} verified matches)`;
+                feedOpps = data.results;
+                renderSwipeStack();
+                renderFeedList();
+              } else {
+                aiSearchSummary.textContent = "No matching opportunities found for intent.";
+              }
+            }
+          } else {
+            aiSearchBanner.classList.add("hidden");
+            activeQuery = val;
+            loadFeedOpportunities(true);
+          }
+        }, isAiSearchMode ? 500 : 300);
+      });
+
+      // Weekly AI Digest button
+      document.getElementById("open-digest-btn")?.addEventListener("click", () => {
+        if (typeof openAIDigestModal === "function") {
+          openAIDigestModal();
+        }
+      });
+
+      // Compare 2 Opportunities Event Listener
+      let selectedCompareIds = [];
+      document.getElementById("feed-list")?.addEventListener("click", (e) => {
+        const btn = e.target.closest(".compare-toggle-btn");
+        if (!btn) return;
+        const id = btn.dataset.id;
+        if (!id) return;
+
+        if (selectedCompareIds.includes(id)) {
+          selectedCompareIds = selectedCompareIds.filter(x => x !== id);
+          btn.className = "compare-toggle-btn flex items-center justify-center gap-1.5 shrink-0 py-2.5 px-3 rounded-lg border border-foreground/30 font-mono text-[10px] font-bold uppercase hover:bg-accent transition-colors";
+          btn.innerHTML = `<i data-lucide="split" class="size-3.5"></i><span>Compare</span>`;
+        } else {
+          selectedCompareIds.push(id);
+          btn.className = "compare-toggle-btn flex items-center justify-center gap-1.5 shrink-0 py-2.5 px-3 rounded-lg border-2 border-primary bg-primary/10 text-primary font-mono text-[10px] font-bold uppercase transition-colors";
+          btn.innerHTML = `<i data-lucide="check" class="size-3.5"></i><span>Selected (1/2)</span>`;
+
+          if (selectedCompareIds.length === 2) {
+            const [id1, id2] = selectedCompareIds;
+            selectedCompareIds = [];
+            document.querySelectorAll(".compare-toggle-btn").forEach(b => {
+              b.className = "compare-toggle-btn flex items-center justify-center gap-1.5 shrink-0 py-2.5 px-3 rounded-lg border border-foreground/30 font-mono text-[10px] font-bold uppercase hover:bg-accent transition-colors";
+              b.innerHTML = `<i data-lucide="split" class="size-3.5"></i><span>Compare</span>`;
+            });
+            if (typeof openAIComparisonModal === "function") {
+              openAIComparisonModal([id1, id2]);
+            }
+          }
+        }
+        if (window.lucide) window.lucide.createIcons();
       });
 
       // Load More button click

@@ -210,6 +210,13 @@
               <span class="font-mono text-xs uppercase tracking-widest font-bold">Select PDF (Max 10MB)</span>
             </div>
           </label>
+          <div id="resume-summary-box" class="hidden mt-4 p-4 bg-primary/10 border border-primary/20 rounded-2xl space-y-2">
+            <div class="flex items-center gap-2">
+              <span class="size-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-display text-xs">✦</span>
+              <span class="font-mono text-[10px] uppercase font-bold text-primary">AI Candidate Summary</span>
+            </div>
+            <p id="resume-summary-text" class="font-sans text-xs text-foreground/90 leading-relaxed"></p>
+          </div>
         </section>
 
         <!-- Professional Links -->
@@ -249,6 +256,37 @@
 
     </div>
   </main>
+
+  <!-- What LOOP Has Learned — Behavioral Personalization Panel -->
+  <section class="max-w-6xl mx-auto px-6 pb-12">
+    <div class="border-2 border-foreground/10 rounded-3xl p-8 bg-card/50">
+      <div class="flex items-start justify-between mb-6 flex-wrap gap-4">
+        <div>
+          <div class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Personalization Engine</div>
+          <h2 class="font-display text-3xl uppercase tracking-tight leading-none mt-1">What LOOP Has Learned<span class="text-primary">.</span></h2>
+          <p class="font-mono text-[10px] text-muted-foreground mt-2 max-w-prose">
+            LOOP learns your preferences gradually from your actions — swipes, saves, applications, and searches.
+            These signals are blended with your profile to personalise your feed. No single action causes a major shift.
+          </p>
+        </div>
+        <div class="flex flex-col items-end gap-1.5">
+          <div class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">Tracked actions</div>
+          <div class="flex flex-wrap gap-1.5 text-[9px] font-mono">
+            <span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 rounded-full">applied +5</span>
+            <span class="px-2 py-0.5 bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/25 rounded-full">interested +3</span>
+            <span class="px-2 py-0.5 bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/25 rounded-full">saved +2</span>
+            <span class="px-2 py-0.5 bg-foreground/5 text-foreground/60 border border-foreground/15 rounded-full">viewed +1</span>
+            <span class="px-2 py-0.5 bg-red-500/10 text-red-700 dark:text-red-300 border border-red-500/25 rounded-full">passed −2</span>
+          </div>
+        </div>
+      </div>
+      <div id="learned-prefs-panel">
+        <div class="shimmer h-8 rounded-xl w-48 mb-3"></div>
+        <div class="shimmer h-6 rounded-xl w-full mb-1.5"></div>
+        <div class="shimmer h-6 rounded-xl w-3/4"></div>
+      </div>
+    </div>
+  </section>
 
   <!-- Footer -->
   <footer class="border-t-2 border-foreground/10 mt-24 py-10">
@@ -733,6 +771,15 @@
                 field: field
               });
 
+              if (data.strengthsSummary) {
+                const summaryBox = document.getElementById("resume-summary-box");
+                const summaryText = document.getElementById("resume-summary-text");
+                if (summaryBox && summaryText) {
+                  summaryText.textContent = data.strengthsSummary;
+                  summaryBox.classList.remove("hidden");
+                }
+              }
+
               await loadProfileData();
             } catch (err) {
               console.error(err);
@@ -839,6 +886,9 @@
 
       // Initial Load
       await loadProfileData();
+      if (typeof renderLearnedPreferences === "function") {
+        await renderLearnedPreferences("learned-prefs-panel");
+      }
     });
   </script>
 </body>

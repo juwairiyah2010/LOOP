@@ -28,6 +28,7 @@ import {
   buildIdsQuery 
 } from "./db.js";
 import { generatePersonalizedOpportunities, analyzeResumePdf } from "./gemini.server.js";
+import { aiService } from "./ai/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -496,7 +497,9 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
     const [opps, watchlistRaw] = await Promise.all([oppsPromise, watchlistPromise]);
 
     const results = opps.map(doc => {
-      const matchEval = DeterministicMatchingEngine.evaluate(dbUser, doc);
+      const matchEval = DeterministicMatchingEngine.evaluate(dbUser, doc, {
+        behaviorPrefs: dbUser.behaviorPrefs || {}
+      });
       return {
         ...formatOpportunity(doc),
         matchScore: matchEval.finalMatchScore,
@@ -543,6 +546,7 @@ app.get("/api/feed/init", requireAuth, async (req, res) => {
       passed: extractStringIds(dbUser.passed),
       applied: extractStringIds(dbUser.applied),
       lifecycle: dbUser.lifecycle || {},
+      behaviorPrefs: dbUser.behaviorPrefs || {},
       opportunities: results,
       watchlist,
     });
@@ -751,6 +755,216 @@ app.post("/api/user/applied/toggle", requireAuth, async (req, res) => {
       await users.updateOne({ _id: toObjectId(req.user.userId) }, { $push: { applied: newEntry } });
     }
     return res.json({ success: true, applied: !isApplied });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ----------------------------------------------------------------------
+// BEHAVIOR TRACKING & PERSONALIZATION
+// Tracks user actions to learn preferences over time.
+// Preferences are stored in user.behaviorPrefs and used to boost/dampen
+// recommendations without overriding the profile-based matching score.
+//
+// Action weight table:
+//   applied   = +5   (strongest positive signal)
+//   interested= +3
+//   saved     = +2
+//   viewed    = +1
+//   searched  = +0.5
+//   passed    = -2   (negative signal — user dismissed)
+//
+// Decay: all existing preference scores × 0.95 on each update cycle.
+// This ensures one click never drastically shifts recommendations.
+// ----------------------------------------------------------------------
+
+const BEHAVIOR_ACTION_WEIGHTS = {
+  applied:    5,
+  interested: 3,
+  saved:      2,
+  opened:     1.5,
+  viewed:     1,
+  searched:   0.5,
+  passed:     -2,
+};
+const BEHAVIOR_DECAY = 0.95;         // applied each time prefs are updated
+const BEHAVIOR_MAX_SCORE = 100;      // cap per token so no token dominates
+const BEHAVIOR_MAX_TOKENS = 200;     // max tokens per dimension to prevent unbounded growth
+
+// Normalise a string token for preference keys
+function normToken(s) {
+  return String(s || "").toLowerCase().trim().replace(/\s+/g, "_");
+}
+
+// Apply decay to all numeric values in a map
+function decayMap(map) {
+  const out = {};
+  for (const [k, v] of Object.entries(map)) {
+    const decayed = Math.round(v * BEHAVIOR_DECAY * 100) / 100;
+    if (Math.abs(decayed) >= 0.01) out[k] = decayed; // prune near-zero entries
+  }
+  return out;
+}
+
+// Merge a delta map into a preference map with capping + decay
+function mergePrefs(existing, deltas) {
+  const decayed = decayMap(existing || {});
+  for (const [k, delta] of Object.entries(deltas)) {
+    const current = decayed[k] || 0;
+    decayed[k] = Math.max(-BEHAVIOR_MAX_SCORE, Math.min(BEHAVIOR_MAX_SCORE, current + delta));
+  }
+  // Prune to top-N tokens by absolute value to prevent unbounded growth
+  const entries = Object.entries(decayed).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  return Object.fromEntries(entries.slice(0, BEHAVIOR_MAX_TOKENS));
+}
+
+// Build delta maps from a single event + opportunity snapshot
+function buildBehaviorDeltas(action, oppSnapshot) {
+  const w = BEHAVIOR_ACTION_WEIGHTS[action] || 0;
+  if (w === 0) return null;
+
+  const deltas = { categories: {}, skills: {}, locations: {}, orgs: {}, work_modes: {} };
+
+  if (oppSnapshot.category) {
+    deltas.categories[normToken(oppSnapshot.category)] = w;
+  }
+  (oppSnapshot.tags || []).forEach(tag => {
+    const t = normToken(tag);
+    if (t) deltas.skills[t] = (deltas.skills[t] || 0) + w * 0.5; // half weight for tags
+  });
+  (oppSnapshot.required_skills || []).forEach(sk => {
+    const t = normToken(sk);
+    if (t) deltas.skills[t] = (deltas.skills[t] || 0) + w;
+  });
+  if (oppSnapshot.location) {
+    deltas.locations[normToken(oppSnapshot.location)] = w * 0.8;
+  }
+  if (oppSnapshot.organization) {
+    deltas.orgs[normToken(oppSnapshot.organization)] = w * 0.6;
+  }
+  if (oppSnapshot.work_mode) {
+    deltas.work_modes[normToken(oppSnapshot.work_mode)] = w;
+  }
+
+  return deltas;
+}
+
+// POST /api/user/behavior/track — fire-and-forget from frontend
+// Body: { events: [{ action, oppId, oppSnapshot }] }
+// oppSnapshot is a minimal opp doc (category, tags, location, work_mode, organization)
+app.post("/api/user/behavior/track", requireAuth, async (req, res) => {
+  try {
+    const { events } = req.body;
+    if (!Array.isArray(events) || events.length === 0) {
+      return res.status(400).json({ error: "events array required" });
+    }
+
+    // Clamp to max 20 events per call to prevent abuse
+    const safeEvents = events.slice(0, 20);
+
+    const { users, dbUser } = await getDbUser(req.user.userId);
+    const existing = dbUser.behaviorPrefs || {
+      categories: {}, skills: {}, locations: {}, orgs: {}, work_modes: {},
+      totalEvents: 0, lastUpdated: null
+    };
+
+    // Merge each event's deltas into the running preference maps
+    let categories  = { ...existing.categories  };
+    let skills      = { ...existing.skills      };
+    let locations   = { ...existing.locations   };
+    let orgs        = { ...existing.orgs        };
+    let work_modes  = { ...existing.work_modes  };
+    let totalEvents = existing.totalEvents || 0;
+
+    for (const ev of safeEvents) {
+      if (!ev.action || !BEHAVIOR_ACTION_WEIGHTS.hasOwnProperty(ev.action)) continue;
+      const snap = ev.oppSnapshot || {};
+      const deltas = buildBehaviorDeltas(ev.action, snap);
+      if (!deltas) continue;
+
+      categories  = mergePrefs(categories,  deltas.categories);
+      skills      = mergePrefs(skills,       deltas.skills);
+      locations   = mergePrefs(locations,    deltas.locations);
+      orgs        = mergePrefs(orgs,         deltas.orgs);
+      work_modes  = mergePrefs(work_modes,   deltas.work_modes);
+      totalEvents += 1;
+    }
+
+    const behaviorPrefs = {
+      categories,
+      skills,
+      locations,
+      orgs,
+      work_modes,
+      totalEvents,
+      lastUpdated: new Date().toISOString()
+    };
+
+    await users.updateOne(
+      { _id: toObjectId(req.user.userId) },
+      { $set: { behaviorPrefs } }
+    );
+
+    // 204 No Content — frontend doesn't need a response body
+    return res.status(204).end();
+  } catch (error) {
+    console.error("behavior/track error:", error);
+    // Fail silently — tracking must never break the UX
+    return res.status(204).end();
+  }
+});
+
+// GET /api/user/behavior/prefs — return learned preferences for display
+app.get("/api/user/behavior/prefs", requireAuth, async (req, res) => {
+  try {
+    const { dbUser } = await getDbUser(req.user.userId);
+    const prefs = dbUser.behaviorPrefs || {
+      categories: {}, skills: {}, locations: {}, orgs: {}, work_modes: {},
+      totalEvents: 0, lastUpdated: null
+    };
+
+    // Return top-5 per dimension with normalised scores (0–100)
+    function topN(map, n = 5) {
+      return Object.entries(map)
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, n)
+        .map(([key, score]) => ({ key, score: Math.round(score) }));
+    }
+
+    res.setHeader("Cache-Control", "private, max-age=10");
+    return res.json({
+      preferences: {
+        categories:  topN(prefs.categories,  5),
+        skills:      topN(prefs.skills,      10),
+        locations:   topN(prefs.locations,   5),
+        orgs:        topN(prefs.orgs,        5),
+        work_modes:  topN(prefs.work_modes,  5),
+      },
+      totalEvents: prefs.totalEvents || 0,
+      lastUpdated: prefs.lastUpdated || null
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/user/behavior/prefs/reset — wipe all learned preferences
+app.delete("/api/user/behavior/prefs/reset", requireAuth, async (req, res) => {
+  try {
+    const { users } = await getDbUser(req.user.userId);
+    await users.updateOne(
+      { _id: toObjectId(req.user.userId) },
+      {
+        $set: {
+          behaviorPrefs: {
+            categories: {}, skills: {}, locations: {}, orgs: {}, work_modes: {},
+            totalEvents: 0, lastUpdated: new Date().toISOString()
+          }
+        }
+      }
+    );
+    return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1245,56 +1459,375 @@ app.post("/api/ingestion/run", requireAuth, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// GEMINI / AI GENERATION ENDPOINTS
+// AI INTELLIGENCE LAYER ENDPOINTS (PHASE 14)
+// Intelligence layer on top of trusted opportunity data.
+// Never invents deadlines, organizations, URLs, prizes, or eligibility facts.
 // ----------------------------------------------------------------------
 
-// Generate personalized opportunities feed using Gemini
-app.post("/api/gemini/generate", requireAuth, async (req, res) => {
+// Provider and Cache Status
+app.get("/api/ai/provider-info", (req, res) => {
+  return res.json(aiService.getProviderInfo());
+});
+
+// 1. Resume Analysis (Unified endpoint supporting base64 PDF or raw text)
+app.post("/api/ai/resume-analysis", softAuth, async (req, res) => {
   try {
-    const { profile } = req.body;
-    if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
-      return res.status(400).json({ error: "User profile required" });
+    const { base64Pdf, text } = req.body;
+    if (!base64Pdf && !text) {
+      return res.status(400).json({ error: "base64Pdf or text is required" });
     }
-    if (JSON.stringify(profile).length > 20000) {
-      return res.status(400).json({ error: "Profile payload too large" });
-    }
-
-    // Rate limit: 5 generations per minute, keyed on authenticated userId (not bypassable via profile.name)
-    const allowedGenerate = await checkDbRateLimit(req.user.userId, "gemini_generate", 5, 60_000);
-    if (!allowedGenerate) {
-      return res.status(429).json({ error: "Rate limit exceeded. Please wait a minute before generating again." });
+    if (base64Pdf && typeof base64Pdf === "string" && base64Pdf.length > 14_000_000) {
+      return res.status(413).json({ error: "Resume file too large. Maximum size is 10 MB." });
     }
 
-    const results = await generatePersonalizedOpportunities(profile);
+    if (req.user?.userId) {
+      const allowedResume = await checkDbRateLimit(req.user.userId, "resume_analyze", 5, 60_000);
+      if (!allowedResume) {
+        return res.status(429).json({ error: "Rate limit exceeded. Please wait a minute before uploading again." });
+      }
+    }
+
+    const results = await aiService.analyzeResume({ base64Pdf, text });
     return res.json(results);
   } catch (error) {
-    console.error("Gemini route error:", error);
+    console.error("AI resume analysis error:", error);
     return res.status(500).json({ error: error.message });
   }
 });
 
-// Analyze base64 PDF resume using Gemini
+// Legacy backward compatibility route for existing frontend calls
 app.post("/api/gemini/analyze-resume", requireAuth, async (req, res) => {
   try {
     const { base64Pdf } = req.body;
     if (!base64Pdf || typeof base64Pdf !== "string") {
       return res.status(400).json({ error: "base64Pdf is required and must be a base64-encoded string" });
     }
-    // Guard oversized payloads: 14 MB base64 ≈ ~10 MB decoded
     if (base64Pdf.length > 14_000_000) {
       return res.status(413).json({ error: "Resume file too large. Maximum size is 10 MB." });
     }
 
-    // Rate limit: 3 resume analyses per minute, keyed on userId (not shared globally)
-    const allowedResume = await checkDbRateLimit(req.user.userId, "resume_analyze", 3, 60_000);
+    const allowedResume = await checkDbRateLimit(req.user.userId, "resume_analyze", 5, 60_000);
     if (!allowedResume) {
       return res.status(429).json({ error: "Rate limit exceeded. Please wait a minute before uploading again." });
     }
 
-    const results = await analyzeResumePdf(base64Pdf);
+    const results = await aiService.analyzeResume({ base64Pdf });
     return res.json(results);
   } catch (error) {
     console.error("Gemini resume analysis route error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 2. Opportunity Summary (Ground truth only, cached)
+app.get("/api/ai/opportunity-summary/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const oppsColl = await getOpportunitiesCollection();
+    const doc = await oppsColl.findOne(buildIdQuery(id));
+    if (!doc) {
+      return res.status(404).json({ error: "Opportunity not found" });
+    }
+    const opp = formatOpportunity(doc);
+    const summary = await aiService.summarizeOpportunity(opp);
+    return res.json(summary);
+  } catch (error) {
+    console.error("AI Summary error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 3. Skill-Gap Analysis
+app.post("/api/ai/skill-gap", softAuth, async (req, res) => {
+  try {
+    const { opportunityId, opportunity, profile } = req.body;
+    let targetOpp = opportunity;
+    if (!targetOpp && opportunityId) {
+      const oppsColl = await getOpportunitiesCollection();
+      const doc = await oppsColl.findOne(buildIdQuery(opportunityId));
+      if (!doc) return res.status(404).json({ error: "Opportunity not found" });
+      targetOpp = formatOpportunity(doc);
+    }
+    if (!targetOpp) {
+      return res.status(400).json({ error: "opportunityId or opportunity object is required" });
+    }
+
+    let userProfile = profile;
+    if (!userProfile && req.user?.userId) {
+      const { dbUser } = await getDbUser(req.user.userId);
+      userProfile = dbUser.profile || {};
+    }
+    userProfile = userProfile || {};
+
+    const gap = await aiService.analyzeSkillGap(userProfile, targetOpp);
+    return res.json(gap);
+  } catch (error) {
+    console.error("AI Skill-Gap error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 4. Match Explanation
+app.post("/api/ai/explain-match", softAuth, async (req, res) => {
+  try {
+    const { opportunityId, opportunity, profile } = req.body;
+    let targetOpp = opportunity;
+    if (!targetOpp && opportunityId) {
+      const oppsColl = await getOpportunitiesCollection();
+      const doc = await oppsColl.findOne(buildIdQuery(opportunityId));
+      if (!doc) return res.status(404).json({ error: "Opportunity not found" });
+      targetOpp = formatOpportunity(doc);
+    }
+    if (!targetOpp) {
+      return res.status(400).json({ error: "opportunityId or opportunity object is required" });
+    }
+
+    let userObj = { profile: profile || {} };
+    if (req.user?.userId) {
+      const { dbUser } = await getDbUser(req.user.userId);
+      userObj = dbUser;
+    }
+
+    const deterministicMatch = DeterministicMatchingEngine.evaluate(userObj, targetOpp, {
+      behaviorPrefs: userObj.behaviorPrefs || {}
+    });
+
+    const explanation = await aiService.explainMatch(userObj.profile || {}, targetOpp, deterministicMatch);
+    return res.json({
+      ...explanation,
+      deterministic: {
+        score: deterministicMatch.finalMatchScore,
+        reasons: deterministicMatch.reasons,
+        eligibility: deterministicMatch.eligibility?.status
+      }
+    });
+  } catch (error) {
+    console.error("AI Match Explanation error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 5. Eligibility Explanation
+app.post("/api/ai/explain-eligibility", softAuth, async (req, res) => {
+  try {
+    const { opportunityId, opportunity, profile } = req.body;
+    let targetOpp = opportunity;
+    if (!targetOpp && opportunityId) {
+      const oppsColl = await getOpportunitiesCollection();
+      const doc = await oppsColl.findOne(buildIdQuery(opportunityId));
+      if (!doc) return res.status(404).json({ error: "Opportunity not found" });
+      targetOpp = formatOpportunity(doc);
+    }
+    if (!targetOpp) {
+      return res.status(400).json({ error: "opportunityId or opportunity object is required" });
+    }
+
+    let userObj = { profile: profile || {} };
+    if (req.user?.userId) {
+      const { dbUser } = await getDbUser(req.user.userId);
+      userObj = dbUser;
+    }
+
+    const deterministicElig = DeterministicEligibilityEngine.evaluate(userObj, targetOpp);
+    const explanation = await aiService.explainEligibility(userObj.profile || {}, targetOpp, deterministicElig);
+    return res.json({
+      ...explanation,
+      deterministic: deterministicElig
+    });
+  } catch (error) {
+    console.error("AI Eligibility Explanation error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 6. Opportunity Comparisons
+app.post("/api/ai/compare", softAuth, async (req, res) => {
+  try {
+    const { opportunityIds, opportunities } = req.body;
+    let oppsToCompare = opportunities;
+    if ((!oppsToCompare || oppsToCompare.length === 0) && Array.isArray(opportunityIds)) {
+      if (opportunityIds.length < 2 || opportunityIds.length > 5) {
+        return res.status(400).json({ error: "Provide between 2 and 5 opportunity IDs to compare" });
+      }
+      const oppsColl = await getOpportunitiesCollection();
+      const docs = await oppsColl.find(buildIdsQuery(opportunityIds)).toArray();
+      oppsToCompare = docs.map(formatOpportunity);
+    }
+
+    if (!Array.isArray(oppsToCompare) || oppsToCompare.length < 2) {
+      return res.status(400).json({ error: "At least 2 valid opportunities are required for comparison" });
+    }
+
+    let userProfile = {};
+    if (req.user?.userId) {
+      const { dbUser } = await getDbUser(req.user.userId);
+      userProfile = dbUser.profile || {};
+    }
+
+    const comparison = await aiService.compareOpportunities(oppsToCompare, userProfile);
+    return res.json(comparison);
+  } catch (error) {
+    console.error("AI Compare error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 7. Natural-Language Search (Semantic intent parsed onto verified opportunities)
+app.post("/api/ai/natural-search", softAuth, async (req, res) => {
+  try {
+    const { query, limit = 20 } = req.body;
+    if (!query || typeof query !== "string" || !query.trim()) {
+      return res.status(400).json({ error: "Search query is required" });
+    }
+
+    // Parse query through AI intelligence layer
+    const parsed = await aiService.parseNaturalLanguageSearch(query);
+    const { interpretedIntent, summary } = parsed;
+
+    // Retrieve active opportunities from DB
+    const oppsColl = await getOpportunitiesCollection();
+    const allDocs = await oppsColl.find({ active: { $ne: false } }).toArray();
+    const opps = allDocs.map(formatOpportunity);
+
+    let userObj = {};
+    if (req.user?.userId) {
+      const { dbUser } = await getDbUser(req.user.userId);
+      userObj = dbUser;
+    }
+
+    // Filter and score against interpreted intent
+    const scoredOpps = opps.map(opp => {
+      let intentBonus = 0;
+      const lowerCategory = (opp.category || "").toLowerCase();
+      const lowerWorkMode = (opp.work_mode || "").toLowerCase();
+      const oppTags = (opp.tags || []).map(t => t.toLowerCase());
+      const oppText = `${opp.title} ${opp.organization} ${opp.description}`.toLowerCase();
+
+      // Category filter/bonus
+      if (interpretedIntent.categories?.length > 0) {
+        if (interpretedIntent.categories.includes(lowerCategory)) intentBonus += 25;
+      }
+      // Work mode filter/bonus
+      if (interpretedIntent.workModes?.length > 0) {
+        if (interpretedIntent.workModes.includes(lowerWorkMode)) intentBonus += 20;
+      }
+      // Skills match
+      if (interpretedIntent.skills?.length > 0) {
+        const skillMatches = interpretedIntent.skills.filter(s => 
+          oppTags.includes(s) || oppText.includes(s)
+        );
+        intentBonus += skillMatches.length * 15;
+      }
+      // Prize/stipend match
+      if (interpretedIntent.hasPrize && opp.prize_amount) {
+        intentBonus += 20;
+      }
+
+      // Keyword matching
+      if (interpretedIntent.keywords?.length > 0) {
+        for (const kw of interpretedIntent.keywords) {
+          if (oppText.includes(kw)) intentBonus += 10;
+        }
+      }
+
+      const matchEval = DeterministicMatchingEngine.evaluate(userObj, opp, {
+        behaviorPrefs: userObj.behaviorPrefs || {}
+      });
+
+      const totalSearchScore = Math.min(100, Math.round(matchEval.finalMatchScore * 0.5 + Math.min(50, intentBonus)));
+
+      return {
+        ...opp,
+        matchScore: matchEval.finalMatchScore,
+        searchRelevanceScore: totalSearchScore,
+        matchEvaluation: matchEval,
+        matchedIntent: {
+          categoryMatch: interpretedIntent.categories?.includes(lowerCategory) || false,
+          workModeMatch: interpretedIntent.workModes?.includes(lowerWorkMode) || false,
+          matchedSkills: (interpretedIntent.skills || []).filter(s => oppTags.includes(s) || oppText.includes(s))
+        }
+      };
+    });
+
+    // Filter to those with positive relevance or match
+    const ranked = scoredOpps
+      .filter(o => o.searchRelevanceScore > 30 || o.matchedIntent.matchedSkills.length > 0 || o.matchedIntent.categoryMatch)
+      .sort((a, b) => b.searchRelevanceScore - a.searchRelevanceScore)
+      .slice(0, Math.min(50, limit));
+
+    return res.json({
+      query,
+      interpretedIntent,
+      summary,
+      totalMatches: ranked.length,
+      results: ranked,
+      _provider: parsed._provider
+    });
+  } catch (error) {
+    console.error("AI Natural Search error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 8. Personalized Digest / Recommendations
+app.get("/api/ai/digest", requireAuth, async (req, res) => {
+  try {
+    const { dbUser } = await getDbUser(req.user.userId);
+    const oppsColl = await getOpportunitiesCollection();
+    const allDocs = await oppsColl.find({ active: { $ne: false } }).toArray();
+    const opps = allDocs.map(formatOpportunity);
+
+    const passedIds = extractStringIds(dbUser.passed);
+    const appliedIds = extractStringIds(dbUser.applied);
+
+    // Score active opportunities using deterministic engine
+    const candidates = opps
+      .filter(o => !passedIds.includes(String(o.id)) && !appliedIds.includes(String(o.id)))
+      .map(o => {
+        const matchEval = DeterministicMatchingEngine.evaluate(dbUser, o, {
+          behaviorPrefs: dbUser.behaviorPrefs || {}
+        });
+        return {
+          ...o,
+          finalScore: matchEval.finalMatchScore
+        };
+      })
+      .filter(o => o.finalScore >= 50)
+      .sort((a, b) => b.finalScore - a.finalScore)
+      .slice(0, 5);
+
+    const digest = await aiService.generatePersonalizedDigest(
+      dbUser.profile || {},
+      candidates,
+      { recentInteractions: { saved: dbUser.saved?.length || 0, applied: dbUser.applied?.length || 0 } }
+    );
+
+    return res.json(digest);
+  } catch (error) {
+    console.error("AI Digest error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 9. Legacy Feed generator (Grounded in trusted DB opportunities, never hallucinated)
+app.post("/api/gemini/generate", requireAuth, async (req, res) => {
+  try {
+    const { profile } = req.body;
+    const oppsColl = await getOpportunitiesCollection();
+    const allDocs = await oppsColl.find({ active: { $ne: false } }).toArray();
+    const opps = allDocs.map(formatOpportunity);
+
+    const candidates = opps
+      .map(o => ({
+        ...o,
+        matchScore: DeterministicMatchingEngine.evaluate({ profile }, o).finalMatchScore
+      }))
+      .sort((a, b) => b.matchScore - a.matchScore)
+      .slice(0, 5);
+
+    return res.json(candidates);
+  } catch (error) {
+    console.error("Feed generation error:", error);
     return res.status(500).json({ error: error.message });
   }
 });

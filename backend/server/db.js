@@ -238,6 +238,10 @@ export class MockCollection {
       newDoc.passed = newDoc.passed || [];
       newDoc.applied = newDoc.applied || [];
       newDoc.lifecycle = newDoc.lifecycle || {}; // keyed by opportunityId
+      newDoc.behaviorPrefs = newDoc.behaviorPrefs || {
+        categories: {}, skills: {}, locations: {}, orgs: {}, work_modes: {},
+        totalEvents: 0, lastUpdated: null
+      };
     }
     const current = this.data;
     current.push(newDoc);

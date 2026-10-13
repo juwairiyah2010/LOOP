@@ -278,8 +278,78 @@ export class DeterministicMatchingEngine {
 
     // -------------------------------------------------------------
     // 6. BEHAVIOR SCORING (Weight: 10%)
+    // Combines two signals:
+    //   A) Explicit list membership (saved/interested/applied/passed)
+    //   B) Learned behaviorPrefs (decaying weighted preference maps)
+    // Signal B is blended at 30% weight so profile + A still dominate.
     // -------------------------------------------------------------
     let behaviorScore = 70;
+    let behaviorAffinityBoost = 0;
+
+    // Signal B: compute affinity from behaviorPrefs
+    const behaviorPrefs = options.behaviorPrefs || {};
+    if (behaviorPrefs && typeof behaviorPrefs === "object") {
+      const catPrefs   = behaviorPrefs.categories  || {};
+      const skillPrefs = behaviorPrefs.skills       || {};
+      const locPrefs   = behaviorPrefs.locations    || {};
+      const modePrefs  = behaviorPrefs.work_modes   || {};
+      const orgPrefs   = behaviorPrefs.orgs         || {};
+
+      let affinitySum = 0;
+      let affinityCount = 0;
+
+      // Category match
+      if (opp.category) {
+        const catKey = String(opp.category).toLowerCase().trim().replace(/\s+/g, "_");
+        if (catPrefs[catKey] !== undefined) {
+          affinitySum += Math.max(-100, Math.min(100, catPrefs[catKey]));
+          affinityCount++;
+        }
+      }
+      // Tag/skill matches (use highest matching tag)
+      if (oppTags.length > 0 && Object.keys(skillPrefs).length > 0) {
+        const tagScores = oppTags.map(t => {
+          const k = String(t).toLowerCase().trim().replace(/\s+/g, "_");
+          return skillPrefs[k] !== undefined ? Math.max(-100, Math.min(100, skillPrefs[k])) : 0;
+        }).filter(s => s !== 0);
+        if (tagScores.length > 0) {
+          affinitySum += tagScores.reduce((a, b) => a + b, 0) / tagScores.length;
+          affinityCount++;
+        }
+      }
+      // Location match
+      if (opp.location) {
+        const locKey = String(opp.location).toLowerCase().trim().replace(/\s+/g, "_");
+        if (locPrefs[locKey] !== undefined) {
+          affinitySum += Math.max(-100, Math.min(100, locPrefs[locKey]));
+          affinityCount++;
+        }
+      }
+      // Work mode match
+      if (opp.work_mode) {
+        const modeKey = String(opp.work_mode).toLowerCase().trim().replace(/\s+/g, "_");
+        if (modePrefs[modeKey] !== undefined) {
+          affinitySum += Math.max(-100, Math.min(100, modePrefs[modeKey]));
+          affinityCount++;
+        }
+      }
+      // Org match
+      if (opp.organization) {
+        const orgKey = String(opp.organization).toLowerCase().trim().replace(/\s+/g, "_");
+        if (orgPrefs[orgKey] !== undefined) {
+          affinitySum += Math.max(-100, Math.min(100, orgPrefs[orgKey]));
+          affinityCount++;
+        }
+      }
+
+      if (affinityCount > 0) {
+        // Normalize to 0–100 scale and cap boost at ±20 pts
+        const rawAffinity = affinitySum / affinityCount; // in [-100, 100] range
+        behaviorAffinityBoost = Math.max(-20, Math.min(20, rawAffinity * 0.20));
+      }
+    }
+
+    // Signal A: explicit interaction list membership
     if (oppId && appliedIds.includes(oppId)) {
       behaviorScore = 100;
       reasons.push("Behavior (100%): You have already applied to this opportunity.");
@@ -290,16 +360,21 @@ export class DeterministicMatchingEngine {
       behaviorScore = 20;
       reasons.push("Behavior (20%): Previously passed/dismissed in your feed.");
     } else {
-      // Affinity check: count interactions with matching category or tags
       const totalInteractions = savedIds.length + interestedIds.length;
-      if (totalInteractions > 0) {
-        behaviorScore = 80;
+      // Base score: boosted by affinity signal
+      const baseScore = totalInteractions > 0 ? 80 : 70;
+      behaviorScore = Math.max(0, Math.min(100, Math.round(baseScore + behaviorAffinityBoost)));
+      if (behaviorAffinityBoost > 3) {
+        reasons.push(`Behavior (${behaviorScore}%): Recommended based on your activity patterns across similar opportunities.`);
+      } else if (behaviorAffinityBoost < -3) {
+        reasons.push(`Behavior (${behaviorScore}%): Lower relevance based on your past dismissals of similar content.`);
+      } else if (totalInteractions > 0) {
         reasons.push("Behavior (80%): Positive engagement pattern with relevant listings.");
       } else {
-        behaviorScore = 70;
         reasons.push("Behavior (70%): Baseline engagement score (neutral history).");
       }
     }
+
 
     // -------------------------------------------------------------
     // 7. URGENCY SCORING (Weight: 8%)
