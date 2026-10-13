@@ -381,39 +381,163 @@ export class MockAIProvider extends BaseAIProvider {
   }
 
   async parseNaturalLanguageSearch(query = "") {
-    const q = query.toLowerCase();
+    const q = (query || "").toLowerCase();
+
+    // 1. Categories
     const categories = [];
-    ["internship", "scholarship", "hackathon", "fellowship", "competition"].forEach(c => {
-      if (q.includes(c)) categories.push(c);
-    });
+    const catKeywords = [
+      { key: "internship", match: ["internship", "internships", "intern", "interns"] },
+      { key: "scholarship", match: ["scholarship", "scholarships", "grant", "grants"] },
+      { key: "hackathon", match: ["hackathon", "hackathons", "buildathon", "hack"] },
+      { key: "fellowship", match: ["fellowship", "fellowships"] },
+      { key: "competition", match: ["competition", "competitions", "contest", "contests", "challenge", "challenges"] }
+    ];
 
+    for (const c of catKeywords) {
+      if (c.match.some(m => new RegExp(`\\b${m}\\b`, "i").test(q))) {
+        categories.push(c.key);
+      }
+    }
+    const category = categories.length === 1 ? categories[0] : undefined;
+
+    // 2. Work modes
     const workModes = [];
-    if (q.includes("remote") || q.includes("virtual") || q.includes("online")) workModes.push("remote");
-    if (q.includes("hybrid")) workModes.push("hybrid");
-    if (q.includes("onsite") || q.includes("in-person")) workModes.push("onsite");
+    if (/\b(remote|virtual|online|wfh)\b/i.test(q)) workModes.push("remote");
+    if (/\b(hybrid)\b/i.test(q)) workModes.push("hybrid");
+    if (/\b(onsite|in-person|in person|offline|office)\b/i.test(q)) workModes.push("onsite");
+    const work_mode = workModes.length === 1 ? workModes[0] : undefined;
 
-    const matchedSkills = [];
-    const allKnownSkills = [...PROGRAMMING_LANGUAGES, ...FRAMEWORKS, ...TOOLS];
-    for (const s of allKnownSkills) {
-      const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (new RegExp(`\\b${escaped}\\b`, 'i').test(q)) {
-        matchedSkills.push(s);
+    // 3. Location extraction
+    let location = undefined;
+    const commonLocations = [
+      "delhi", "new delhi", "bengaluru", "bangalore", "mumbai", "hyderabad", "pune", "chennai",
+      "noida", "gurgaon", "gurugram", "kolkata", "san francisco", "new york", "london", "boston",
+      "austin", "chicago", "seattle", "tokyo", "toronto"
+    ];
+    for (const loc of commonLocations) {
+      if (new RegExp(`\\b${loc}\\b`, "i").test(q)) {
+        location = loc.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+        break;
+      }
+    }
+    if (!location) {
+      const nearMatch = q.match(/\b(?:near|in|at|around)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i);
+      if (nearMatch && nearMatch[1]) {
+        const candidate = nearMatch[1].trim();
+        const stopWords = ["for", "this", "my", "the", "a", "an", "closing", "urgent"];
+        if (!stopWords.includes(candidate.toLowerCase())) {
+          location = candidate.charAt(0).toUpperCase() + candidate.slice(1);
+        }
       }
     }
 
-    const hasPrize = q.includes("prize") || q.includes("cash") || q.includes("money") || q.includes("stipend") || q.includes("paid") || q.includes("$");
-    const urgent = q.includes("soon") || q.includes("urgent") || q.includes("closing") || q.includes("this week");
+    // 4. Skills extraction
+    const matchedSkills = [];
+    if (/\b(ai|artificial intelligence)\b/i.test(q)) matchedSkills.push("AI");
+    if (/\b(ml|machine learning)\b/i.test(q)) matchedSkills.push("Machine Learning");
+    if (/\b(java)\b/i.test(q) && !/\b(javascript)\b/i.test(q)) matchedSkills.push("Java");
+    if (/\b(javascript|js)\b/i.test(q)) matchedSkills.push("JavaScript");
+    if (/\b(typescript|ts)\b/i.test(q)) matchedSkills.push("TypeScript");
+    if (/\b(python)\b/i.test(q)) matchedSkills.push("Python");
+    if (/\b(react)\b/i.test(q)) matchedSkills.push("React");
+    if (/\b(node(?:\.js)?)\b/i.test(q)) matchedSkills.push("Node.js");
+    if (/\b(c\+\+)\b/i.test(q)) matchedSkills.push("C++");
+    if (/\b(sql|postgres|mongodb)\b/i.test(q)) matchedSkills.push("SQL");
+    if (/\b(spring|spring boot)\b/i.test(q)) matchedSkills.push("Spring Boot");
+    if (/\b(web3|blockchain)\b/i.test(q)) matchedSkills.push("Web3");
+
+    const allKnownSkills = [...PROGRAMMING_LANGUAGES, ...FRAMEWORKS, ...TOOLS, ...TECHNOLOGIES, ...DOMAINS];
+    for (const s of allKnownSkills) {
+      const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}\\b`, 'i').test(q)) {
+        const cap = s.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+        if (!matchedSkills.some(existing => existing.toLowerCase() === s.toLowerCase())) {
+          matchedSkills.push(cap);
+        }
+      }
+    }
+
+    // 5. Closing window / Deadlines
+    let maxDaysLeft = undefined;
+    if (/\b(closing this week|this week|7 days|within a week|ending this week)\b/i.test(q)) {
+      maxDaysLeft = 7;
+    } else if (/\b(closing this month|this month|30 days)\b/i.test(q)) {
+      maxDaysLeft = 30;
+    } else if (/\b(closing soon|urgent|urgently|soon|ending soon)\b/i.test(q)) {
+      maxDaysLeft = 14;
+    }
+
+    // 6. Education / Academic profile
+    let education = undefined;
+    let yearOfStudy = undefined;
+    let major = undefined;
+
+    if (/\b(1st year|first year|freshman)\b/i.test(q)) yearOfStudy = 1;
+    if (/\b(2nd year|second year|sophomore)\b/i.test(q)) yearOfStudy = 2;
+    if (/\b(3rd year|third year|junior)\b/i.test(q)) yearOfStudy = 3;
+    if (/\b(4th year|fourth year|senior|final year)\b/i.test(q)) yearOfStudy = 4;
+
+    if (/\b(cse|computer science|cs)\b/i.test(q)) major = "CSE";
+    else if (/\b(ece|electronics)\b/i.test(q)) major = "ECE";
+    else if (/\b(it|information technology)\b/i.test(q)) major = "IT";
+    else if (/\b(mechanical)\b/i.test(q)) major = "Mechanical";
+    else if (/\b(civil)\b/i.test(q)) major = "Civil";
+    else if (/\b(electrical)\b/i.test(q)) major = "Electrical";
+    else if (/\b(data science)\b/i.test(q)) major = "Data Science";
+
+    if (yearOfStudy || major) {
+      education = {
+        ...(yearOfStudy ? { yearOfStudy } : {}),
+        ...(major ? { major } : {})
+      };
+    }
+
+    // 7. Check User Eligibility
+    const checkUserEligibility = /\b(eligible for|i am eligible|eligible|my eligibility|qualify for)\b/i.test(q);
+
+    // 8. Prize or Stipend
+    const hasPrize = /\b(prize|prizes|cash|money|stipend|paid|\$|inr|₹|bounty)\b/i.test(q);
+
+    const interpretedFilters = {
+      ...(category ? { category } : {}),
+      ...(categories.length > 0 ? { categories } : {}),
+      ...(work_mode ? { work_mode } : {}),
+      ...(workModes.length > 0 ? { workModes } : {}),
+      ...(location ? { location } : {}),
+      ...(matchedSkills.length > 0 ? { skills: matchedSkills } : {}),
+      ...(maxDaysLeft !== undefined ? { maxDaysLeft } : {}),
+      ...(education ? { education } : {}),
+      ...(checkUserEligibility ? { checkUserEligibility: true } : {}),
+      ...(hasPrize ? { hasPrize: true } : {})
+    };
+
+    const summaryParts = [];
+    if (checkUserEligibility) summaryParts.push("Verified eligible");
+    if (work_mode) summaryParts.push(work_mode);
+    if (matchedSkills.length > 0) summaryParts.push(matchedSkills.join("/") + " skills");
+    if (categories.length > 0) summaryParts.push(categories.join(" or ") + "s");
+    else summaryParts.push("opportunities");
+    if (location) summaryParts.push(`near ${location}`);
+    if (education) {
+      const eduStr = [
+        education.yearOfStudy ? `${education.yearOfStudy}${education.yearOfStudy === 1 ? 'st' : education.yearOfStudy === 2 ? 'nd' : education.yearOfStudy === 3 ? 'rd' : 'th'} year` : "",
+        education.major || ""
+      ].filter(Boolean).join(" ");
+      summaryParts.push(`for ${eduStr} students`);
+    }
+    if (maxDaysLeft) {
+      summaryParts.push(maxDaysLeft <= 7 ? "closing this week" : `closing in ${maxDaysLeft} days`);
+    }
+    if (hasPrize) summaryParts.push("with prizes/stipends");
+
+    const summary = `Searching for ${summaryParts.join(" ")}`;
 
     return {
       query,
-      interpretedIntent: {
-        categories: categories.length > 0 ? categories : undefined,
-        skills: matchedSkills.length > 0 ? matchedSkills : undefined,
-        workModes: workModes.length > 0 ? workModes : undefined,
-        hasPrize: hasPrize ? true : undefined,
-        maxDaysLeft: urgent ? 14 : undefined
-      },
-      summary: `Searching for ${categories.join(" or ") || "opportunities"}${matchedSkills.length > 0 ? ` with skills: ${matchedSkills.join(", ")}` : ""}${workModes.length > 0 ? ` (${workModes.join("/")})` : ""}${hasPrize ? " offering prizes or stipends" : ""}${urgent ? " closing soon" : ""}.`
+      interpretedFilters,
+      interpretedIntent: interpretedFilters,
+      summary,
+      _provider: this.getName()
     };
   }
 

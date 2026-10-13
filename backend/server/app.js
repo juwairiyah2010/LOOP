@@ -29,6 +29,7 @@ import {
 } from "./db.js";
 import { generatePersonalizedOpportunities, analyzeResumePdf } from "./gemini.server.js";
 import { aiService } from "./ai/index.js";
+import { searchOpportunitiesByNaturalLanguage } from "./search/natural_search.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1672,7 +1673,7 @@ app.post("/api/ai/compare", softAuth, async (req, res) => {
   }
 });
 
-// 7. Natural-Language Search (Semantic intent parsed onto verified opportunities)
+// 7. Natural-Language Search (AI parses structured filters; MongoDB executes search)
 app.post("/api/ai/natural-search", softAuth, async (req, res) => {
   try {
     const { query, limit = 20 } = req.body;
@@ -1680,89 +1681,18 @@ app.post("/api/ai/natural-search", softAuth, async (req, res) => {
       return res.status(400).json({ error: "Search query is required" });
     }
 
-    // Parse query through AI intelligence layer
-    const parsed = await aiService.parseNaturalLanguageSearch(query);
-    const { interpretedIntent, summary } = parsed;
-
-    // Retrieve active opportunities from DB
-    const oppsColl = await getOpportunitiesCollection();
-    const allDocs = await oppsColl.find({ active: { $ne: false } }).toArray();
-    const opps = allDocs.map(formatOpportunity);
-
-    let userObj = {};
+    let dbUser = null;
     if (req.user?.userId) {
-      const { dbUser } = await getDbUser(req.user.userId);
-      userObj = dbUser;
+      try {
+        const userRes = await getDbUser(req.user.userId);
+        dbUser = userRes.dbUser;
+      } catch {
+        // Soft auth: user session expired or missing
+      }
     }
 
-    // Filter and score against interpreted intent
-    const scoredOpps = opps.map(opp => {
-      let intentBonus = 0;
-      const lowerCategory = (opp.category || "").toLowerCase();
-      const lowerWorkMode = (opp.work_mode || "").toLowerCase();
-      const oppTags = (opp.tags || []).map(t => t.toLowerCase());
-      const oppText = `${opp.title} ${opp.organization} ${opp.description}`.toLowerCase();
-
-      // Category filter/bonus
-      if (interpretedIntent.categories?.length > 0) {
-        if (interpretedIntent.categories.includes(lowerCategory)) intentBonus += 25;
-      }
-      // Work mode filter/bonus
-      if (interpretedIntent.workModes?.length > 0) {
-        if (interpretedIntent.workModes.includes(lowerWorkMode)) intentBonus += 20;
-      }
-      // Skills match
-      if (interpretedIntent.skills?.length > 0) {
-        const skillMatches = interpretedIntent.skills.filter(s => 
-          oppTags.includes(s) || oppText.includes(s)
-        );
-        intentBonus += skillMatches.length * 15;
-      }
-      // Prize/stipend match
-      if (interpretedIntent.hasPrize && opp.prize_amount) {
-        intentBonus += 20;
-      }
-
-      // Keyword matching
-      if (interpretedIntent.keywords?.length > 0) {
-        for (const kw of interpretedIntent.keywords) {
-          if (oppText.includes(kw)) intentBonus += 10;
-        }
-      }
-
-      const matchEval = DeterministicMatchingEngine.evaluate(userObj, opp, {
-        behaviorPrefs: userObj.behaviorPrefs || {}
-      });
-
-      const totalSearchScore = Math.min(100, Math.round(matchEval.finalMatchScore * 0.5 + Math.min(50, intentBonus)));
-
-      return {
-        ...opp,
-        matchScore: matchEval.finalMatchScore,
-        searchRelevanceScore: totalSearchScore,
-        matchEvaluation: matchEval,
-        matchedIntent: {
-          categoryMatch: interpretedIntent.categories?.includes(lowerCategory) || false,
-          workModeMatch: interpretedIntent.workModes?.includes(lowerWorkMode) || false,
-          matchedSkills: (interpretedIntent.skills || []).filter(s => oppTags.includes(s) || oppText.includes(s))
-        }
-      };
-    });
-
-    // Filter to those with positive relevance or match
-    const ranked = scoredOpps
-      .filter(o => o.searchRelevanceScore > 30 || o.matchedIntent.matchedSkills.length > 0 || o.matchedIntent.categoryMatch)
-      .sort((a, b) => b.searchRelevanceScore - a.searchRelevanceScore)
-      .slice(0, Math.min(50, limit));
-
-    return res.json({
-      query,
-      interpretedIntent,
-      summary,
-      totalMatches: ranked.length,
-      results: ranked,
-      _provider: parsed._provider
-    });
+    const searchResult = await searchOpportunitiesByNaturalLanguage(query, dbUser, { limit });
+    return res.json(searchResult);
   } catch (error) {
     console.error("AI Natural Search error:", error);
     return res.status(500).json({ error: error.message });

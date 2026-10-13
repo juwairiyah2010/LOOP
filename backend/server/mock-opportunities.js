@@ -378,5 +378,100 @@ export const mockOpportunities = [
     verified: true,
     active: true,
     application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
+  },
+  {
+    id: "opp_21",
+    title: "Remote AI & Machine Learning Research Intern",
+    organization: "Nexus Intelligence Lab",
+    category: "internship",
+    location: "Remote",
+    deadline: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+    tags: ["AI", "Machine Learning", "Python", "Deep Learning", "Remote"],
+    description: "Join Nexus Intelligence Lab as a remote AI research intern developing agentic workflows and multi-modal models. Designed specifically for 3rd year CSE and computer science students.",
+    apply_url: "https://example.com/nexus-ai-intern",
+    posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
+    participants: 140,
+    featured: true,
+    prize_amount: null,
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    eligibility: {
+      allowed_majors: ["CSE", "Computer Science", "Software Engineering"],
+      allowed_years: [3, "3", "3rd year"],
+      allowed_degrees: ["B.Tech", "B.E.", "BS"],
+      required_skills: ["AI", "Python"]
+    },
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
+  },
+  {
+    id: "opp_22",
+    title: "Java Backend Engineering Intern",
+    organization: "Apex Enterprise Systems",
+    category: "internship",
+    location: "Bengaluru, India",
+    deadline: new Date(Date.now() + 1000 * 60 * 60 * 24 * 4).toISOString(),
+    tags: ["Java", "Spring Boot", "Microservices", "SQL"],
+    description: "Build robust distributed backend systems with modern Java and Spring Boot. Fast-track application round closing this week!",
+    apply_url: "https://example.com/apex-java-intern",
+    posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
+    participants: 95,
+    featured: false,
+    prize_amount: null,
+    work_mode: "hybrid",
+    verified: true,
+    active: true,
+    eligibility: {
+      allowed_majors: ["CSE", "IT", "Computer Science", "all"],
+      required_skills: ["Java", "Spring Boot"]
+    },
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
+  },
+  {
+    id: "opp_23",
+    title: "Delhi Tech Innovation Hackathon 2026",
+    organization: "Delhi Innovation Hub & Tech Society",
+    category: "hackathon",
+    location: "Delhi, India",
+    deadline: new Date(Date.now() + 1000 * 60 * 60 * 24 * 16).toISOString(),
+    tags: ["Hackathon", "Innovation", "Delhi", "AI", "Web3"],
+    description: "A premier 36-hour physical hackathon in Delhi bringing together top student builders to solve civic and AI challenges. Over ₹10,00,000 in cash prizes.",
+    apply_url: "https://example.com/delhi-hackathon",
+    posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 4).toISOString(),
+    participants: 520,
+    featured: true,
+    prize_amount: "₹10,00,000",
+    work_mode: "onsite",
+    verified: true,
+    active: true,
+    eligibility: {
+      allowed_majors: ["all"]
+    },
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
+  },
+  {
+    id: "opp_24",
+    title: "National Undergraduate STEM & Coding Scholarship",
+    organization: "Future Scholars Foundation",
+    category: "scholarship",
+    location: "Remote",
+    deadline: new Date(Date.now() + 1000 * 60 * 60 * 24 * 35).toISOString(),
+    tags: ["STEM", "Scholarship", "Undergraduate", "Engineering", "Merit"],
+    description: "A $4,000 merit-based academic scholarship awarded to undergraduate engineering and science students with strong coding fundamentals.",
+    apply_url: "https://example.com/stem-coding-scholarship",
+    posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
+    participants: 210,
+    featured: false,
+    prize_amount: "$4,000",
+    work_mode: "remote",
+    verified: true,
+    active: true,
+    eligibility: {
+      allowed_majors: ["CSE", "Engineering", "STEM", "all"],
+      allowed_years: [1, 2, 3, 4, "all"],
+      minimum_gpa: 3.0
+    },
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
   }
 ];
+
