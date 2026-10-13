@@ -727,12 +727,19 @@ function renderHeader(user) {
 
   if (user) {
     headerNav.innerHTML = `
-      <div class="flex items-center gap-6">
+      <div class="flex items-center gap-5">
         <a href="/" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Feed</a>
         <a href="/calendar" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Calendar</a>
         <a href="/saved" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Saved</a>
         <a href="/tracker" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Tracker</a>
         <a href="/profile" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Profile</a>
+        ${(user?.isAdmin || user?.role === 'admin') ? `
+          <a href="/admin" class="font-mono text-[11px] font-bold uppercase tracking-tight text-primary hover:text-primary/80 transition-all flex items-center gap-1">🛡️ Admin</a>
+        ` : ''}
+        <button id="notif-bell-btn" class="relative p-2 rounded-full border border-foreground/30 hover:border-foreground hover:bg-foreground/5 transition-all text-foreground flex items-center justify-center" title="Notifications" aria-label="Notifications">
+          <i data-lucide="bell" class="size-3.5"></i>
+          <span id="notif-badge" class="hidden absolute -top-1 -right-1 size-4 bg-primary text-primary-foreground font-mono text-[9px] font-bold rounded-full flex items-center justify-center">0</span>
+        </button>
         <button id="logout-btn" class="px-4 py-2 border-2 border-foreground rounded-full font-mono text-[11px] font-bold uppercase tracking-tight hover:bg-foreground hover:text-background transition-all">Log Out</button>
       </div>
     `;
@@ -742,6 +749,11 @@ function renderHeader(user) {
         window.location.href = "/";
       }
     });
+    document.getElementById("notif-bell-btn")?.addEventListener("click", () => {
+      openNotificationModal();
+    });
+    updateNotificationBadge();
+    if (window.lucide) window.lucide.createIcons();
   } else {
     headerNav.innerHTML = `
       <a href="/login" class="px-4 py-2 rounded-full font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground hover:bg-foreground/5 transition-all">Log In</a>
@@ -1315,10 +1327,646 @@ async function openAIDigestModal() {
   if (window.lucide) window.lucide.createIcons();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 16: NOTIFICATION INTELLIGENCE CLIENT API & MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Fetch user notifications */
+async function fetchNotifications(options = {}) {
+  try {
+    const url = `/api/notifications?unreadOnly=${!!options.unreadOnly}&evaluate=${options.evaluate !== false}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    console.error("fetchNotifications error:", err);
+    return null;
+  }
+}
+
+/** Update the badge on the header notification bell */
+async function updateNotificationBadge() {
+  const badge = document.getElementById("notif-badge");
+  if (!badge) return;
+  try {
+    const data = await fetchNotifications({ unreadOnly: true, evaluate: false });
+    if (!data) return;
+    const count = data.unreadCount || 0;
+    if (count > 0) {
+      badge.textContent = count > 9 ? "9+" : String(count);
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
+    }
+  } catch {
+    // Non-blocking
+  }
+}
+
+/** Mark a single notification as read */
+async function markNotificationRead(id) {
+  try {
+    const res = await fetch(`/api/notifications/${encodeURIComponent(id)}/read`, { method: "POST" });
+    if (res.ok) updateNotificationBadge();
+    return res.ok;
+  } catch (err) {
+    console.error("markNotificationRead error:", err);
+    return false;
+  }
+}
+
+/** Mark all notifications as read */
+async function markAllNotificationsRead() {
+  try {
+    const res = await fetch("/api/notifications/read-all", { method: "POST" });
+    if (res.ok) updateNotificationBadge();
+    return res.ok;
+  } catch (err) {
+    console.error("markAllNotificationsRead error:", err);
+    return false;
+  }
+}
+
+/** Snooze notification */
+async function snoozeNotification(id, snoozeInput = { hours: 24 }) {
+  try {
+    const res = await fetch(`/api/notifications/${encodeURIComponent(id)}/snooze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(snoozeInput)
+    });
+    if (res.ok) updateNotificationBadge();
+    return await res.json();
+  } catch (err) {
+    console.error("snoozeNotification error:", err);
+    return null;
+  }
+}
+
+/** Unsnooze notification */
+async function unsnoozeNotification(id) {
+  try {
+    const res = await fetch(`/api/notifications/${encodeURIComponent(id)}/unsnooze`, { method: "POST" });
+    if (res.ok) updateNotificationBadge();
+    return res.ok;
+  } catch (err) {
+    console.error("unsnoozeNotification error:", err);
+    return false;
+  }
+}
+
+/** Fetch notification preferences */
+async function fetchNotificationPreferences() {
+  try {
+    const res = await fetch("/api/notifications/preferences");
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.preferences;
+  } catch (err) {
+    console.error("fetchNotificationPreferences error:", err);
+    return null;
+  }
+}
+
+/** Save notification preferences */
+async function saveNotificationPreferences(prefs) {
+  try {
+    const res = await fetch("/api/notifications/preferences", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prefs)
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("saveNotificationPreferences error:", err);
+    return false;
+  }
+}
+
+/**
+ * Opens the interactive Notification Center Modal with tabs for Notifications and Preferences.
+ */
+async function openNotificationModal() {
+  let modal = document.getElementById("notification-modal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "notification-modal";
+    modal.className = "fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-entry";
+    document.body.appendChild(modal);
+  } else {
+    modal.classList.remove("hidden");
+  }
+
+  let currentTab = "notifications"; // "notifications" | "preferences"
+  let filterUnreadOnly = false;
+
+  async function renderModalContent() {
+    const loadingHtml = `
+      <div class="relative w-full max-w-2xl bg-card border-2 border-foreground rounded-3xl p-6 shadow-stamp-lg flex flex-col gap-4">
+        <div class="flex items-center justify-between pb-4 border-b border-foreground/10">
+          <div class="flex items-center gap-2">
+            <span class="size-6 rounded-lg bg-primary text-primary-foreground font-mono text-xs flex items-center justify-center font-bold">🔔</span>
+            <h3 class="font-display text-xl uppercase tracking-tight">Notification Center</h3>
+          </div>
+          <button id="close-notif-modal" class="size-8 rounded-full border border-foreground/20 hover:border-foreground flex items-center justify-center font-bold">✕</button>
+        </div>
+        <div class="py-12 text-center font-mono text-xs text-muted-foreground animate-pulse">✦ Loading notifications and preferences...</div>
+      </div>
+    `;
+    modal.innerHTML = loadingHtml;
+    document.getElementById("close-notif-modal")?.addEventListener("click", () => modal.classList.add("hidden"));
+
+    const [data, prefs] = await Promise.all([
+      fetchNotifications({ unreadOnly: filterUnreadOnly }),
+      fetchNotificationPreferences()
+    ]);
+
+    const notifs = data?.notifications || [];
+    const unreadCount = data?.unreadCount || 0;
+    const isQuiet = data?.quietHoursActive || false;
+    const quietHours = prefs?.quietHours || {};
+
+    const typeBadges = {
+      high_match: "bg-primary/10 text-primary border-primary/30",
+      saved_deadline: "bg-amber-500/10 text-amber-600 border-amber-500/30",
+      interested_deadline: "bg-pink-500/10 text-pink-600 border-pink-500/30",
+      deadline_reminder: "bg-purple-500/10 text-purple-600 border-purple-500/30",
+      deadline_change: "bg-blue-500/10 text-blue-600 border-blue-500/30",
+      follow_up_reminder: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30",
+      weekly_digest: "bg-indigo-500/10 text-indigo-600 border-indigo-500/30"
+    };
+
+    const typeLabels = {
+      high_match: "✦ High Match",
+      saved_deadline: "⏰ Saved Deadline",
+      interested_deadline: "❤️ Tracked Opportunity",
+      deadline_reminder: "📌 Deadline Reminder",
+      deadline_change: "🔄 Deadline Changed",
+      follow_up_reminder: "📬 Follow-Up Due",
+      weekly_digest: "🗞️ Weekly Digest"
+    };
+
+    const priorityBadges = {
+      CRITICAL: "bg-red-500/20 text-red-600 font-bold",
+      URGENT: "bg-red-500/15 text-red-600 font-bold",
+      HIGH: "bg-amber-500/15 text-amber-600 font-bold",
+      MEDIUM: "bg-blue-500/15 text-blue-600",
+      LOW: "bg-muted text-muted-foreground"
+    };
+
+    modal.innerHTML = `
+      <div class="relative w-full max-w-2xl bg-card border-2 border-foreground rounded-3xl p-6 shadow-stamp-lg flex flex-col max-h-[90vh]">
+        
+        <!-- Header -->
+        <div class="flex items-center justify-between pb-4 border-b border-foreground/10 shrink-0">
+          <div class="flex items-center gap-3">
+            <span class="size-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-display text-base">✦</span>
+            <div>
+              <h3 class="font-display text-2xl uppercase tracking-tight leading-none">Notifications</h3>
+              <div class="font-mono text-[10px] text-muted-foreground uppercase tracking-wider mt-1">
+                ${unreadCount} unread · ${prefs?.timezone || 'Local'} Timezone
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="close-notif-modal" class="size-8 rounded-full border border-foreground/20 hover:border-foreground flex items-center justify-center font-bold transition-all">✕</button>
+          </div>
+        </div>
+
+        <!-- Navigation Sub-bar -->
+        <div class="flex items-center justify-between py-3 border-b border-foreground/10 shrink-0 flex-wrap gap-2">
+          <div class="flex items-center gap-1.5 p-1 bg-muted/30 rounded-xl border border-foreground/10 font-mono text-[10px] uppercase font-bold">
+            <button id="tab-notifs-btn" class="px-3 py-1 rounded-lg ${currentTab === 'notifications' ? 'bg-foreground text-background shadow-sm' : 'text-muted-foreground hover:text-foreground'} transition-all">
+              Inbox (${notifs.length})
+            </button>
+            <button id="tab-prefs-btn" class="px-3 py-1 rounded-lg ${currentTab === 'preferences' ? 'bg-foreground text-background shadow-sm' : 'text-muted-foreground hover:text-foreground'} transition-all">
+              Preferences & Quiet Hours
+            </button>
+          </div>
+
+          ${currentTab === 'notifications' ? `
+            <div class="flex items-center gap-2 font-mono text-[10px]">
+              <button id="toggle-filter-unread" class="px-2.5 py-1 rounded-lg border border-foreground/20 hover:border-foreground ${filterUnreadOnly ? 'bg-primary/20 text-primary font-bold' : 'text-muted-foreground'} transition-colors">
+                ${filterUnreadOnly ? 'Showing Unread' : 'Filter Unread'}
+              </button>
+              <button id="mark-all-read-btn" class="px-2.5 py-1 rounded-lg border border-foreground/20 hover:border-foreground text-foreground/80 hover:text-foreground transition-colors">
+                Mark All Read
+              </button>
+            </div>
+          ` : ''}
+        </div>
+
+        <!-- Body Area -->
+        <div class="overflow-y-auto flex-1 py-4 space-y-3 pr-1">
+          ${currentTab === 'notifications' ? `
+            ${isQuiet ? `
+              <div class="p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-mono text-[10px] flex items-center gap-2.5">
+                <span class="text-sm">🌙</span>
+                <span><strong>Quiet Hours Active (${quietHours.start} – ${quietHours.end})</strong>: Non-urgent alerts are deferred to prevent disruption.</span>
+              </div>
+            ` : ''}
+
+            ${notifs.length === 0 ? `
+              <div class="py-16 text-center">
+                <div class="text-3xl mb-2">🎉</div>
+                <div class="font-display text-xl uppercase tracking-tight">You're All Caught Up!</div>
+                <p class="font-mono text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+                  ${filterUnreadOnly ? 'No unread notifications right now.' : 'No notifications yet. Track opportunities to receive timely deadline and follow-up alerts.'}
+                </p>
+              </div>
+            ` : notifs.map(n => `
+              <div class="p-4 rounded-2xl border ${n.read ? 'border-foreground/10 bg-card/60 opacity-80' : 'border-primary/40 bg-card shadow-sm'} flex flex-col gap-2.5 transition-all hover:border-foreground/40">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex flex-wrap items-center gap-1.5 font-mono text-[9px] uppercase">
+                    <span class="px-2 py-0.5 rounded-full border ${typeBadges[n.type] || 'border-foreground/20'} font-bold">
+                      ${typeLabels[n.type] || n.type}
+                    </span>
+                    <span class="px-1.5 py-0.5 rounded ${priorityBadges[n.priority] || ''}">
+                      ${n.priority}
+                    </span>
+                    ${n.isSnoozed ? `<span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 font-bold">💤 Snoozed</span>` : ''}
+                    ${!n.read ? `<span class="size-2 rounded-full bg-primary inline-block"></span>` : ''}
+                  </div>
+                  <span class="font-mono text-[9px] text-muted-foreground whitespace-nowrap">
+                    ${new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  </span>
+                </div>
+
+                <div>
+                  <h4 class="font-sans text-sm font-bold leading-tight ${n.read ? 'text-foreground/80' : 'text-foreground'}">${n.title}</h4>
+                  <p class="font-sans text-xs text-foreground/70 mt-1 leading-relaxed">${n.message}</p>
+                </div>
+
+                <div class="flex items-center justify-between pt-2 border-t border-foreground/5 font-mono text-[10px] flex-wrap gap-2">
+                  <div class="flex items-center gap-2">
+                    ${n.actionUrl ? `
+                      <a href="${n.actionUrl}" class="px-3 py-1 bg-foreground text-background rounded-lg font-bold uppercase hover:bg-primary transition-colors text-center">
+                        View Details →
+                      </a>
+                    ` : ''}
+                    ${!n.read ? `
+                      <button data-notif-id="${n.id}" class="btn-mark-read px-2.5 py-1 border border-foreground/20 rounded-lg hover:border-foreground transition-colors">
+                        Mark Read
+                      </button>
+                    ` : ''}
+                  </div>
+
+                  <div class="flex items-center gap-1 text-muted-foreground">
+                    <button data-notif-id="${n.id}" data-snooze-hours="24" class="btn-snooze px-2 py-1 border border-foreground/15 rounded-lg hover:border-foreground hover:text-foreground transition-colors">
+                      💤 Snooze 24h
+                    </button>
+                    <button data-notif-id="${n.id}" data-snooze-days="3" class="btn-snooze px-2 py-1 border border-foreground/15 rounded-lg hover:border-foreground hover:text-foreground transition-colors">
+                      💤 3d
+                    </button>
+                    ${n.isSnoozed ? `
+                      <button data-notif-id="${n.id}" class="btn-unsnooze px-2 py-1 bg-amber-500/10 text-amber-600 border border-amber-500/30 rounded-lg font-bold">
+                        Unsnooze
+                      </button>
+                    ` : ''}
+                  </div>
+                </div>
+              </div>
+            `).join("")}
+          ` : `
+            <!-- Preferences Form -->
+            <form id="notif-prefs-form" class="space-y-5 font-mono text-xs">
+              <div class="p-4 rounded-2xl bg-muted/20 border border-foreground/10 space-y-3">
+                <div class="font-bold uppercase tracking-wider text-primary text-[10px]">Notification Triggers</div>
+                
+                <label class="flex items-center justify-between gap-3 cursor-pointer">
+                  <span>New High-Match Opportunities</span>
+                  <input type="checkbox" name="highMatch" class="size-4 accent-primary" ${prefs?.highMatch !== false ? 'checked' : ''}>
+                </label>
+                
+                <div class="pl-4 pt-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                  <span>Minimum Match Threshold</span>
+                  <div class="flex items-center gap-2">
+                    <input type="range" name="minMatchScore" min="50" max="95" step="5" value="${prefs?.minMatchScore || 80}" class="accent-primary" id="range-min-score">
+                    <span id="label-min-score" class="font-bold text-foreground w-8 text-right">${prefs?.minMatchScore || 80}%</span>
+                  </div>
+                </div>
+
+                <label class="flex items-center justify-between gap-3 cursor-pointer pt-2 border-t border-foreground/5">
+                  <span>Saved Opportunity Deadlines (7d, 3d, 1d)</span>
+                  <input type="checkbox" name="savedDeadlines" class="size-4 accent-primary" ${prefs?.savedDeadlines !== false ? 'checked' : ''}>
+                </label>
+
+                <label class="flex items-center justify-between gap-3 cursor-pointer">
+                  <span>Interested Opportunity Deadlines</span>
+                  <input type="checkbox" name="interestedDeadlines" class="size-4 accent-primary" ${prefs?.interestedDeadlines !== false ? 'checked' : ''}>
+                </label>
+
+                <label class="flex items-center justify-between gap-3 cursor-pointer">
+                  <span>Preparation Milestones & Reminders</span>
+                  <input type="checkbox" name="deadlineReminders" class="size-4 accent-primary" ${prefs?.deadlineReminders !== false ? 'checked' : ''}>
+                </label>
+
+                <label class="flex items-center justify-between gap-3 cursor-pointer">
+                  <span>Deadline Changes (Official Date Shifts)</span>
+                  <input type="checkbox" name="deadlineChanges" class="size-4 accent-primary" ${prefs?.deadlineChanges !== false ? 'checked' : ''}>
+                </label>
+
+                <label class="flex items-center justify-between gap-3 cursor-pointer">
+                  <span>Application Follow-Up Reminders</span>
+                  <input type="checkbox" name="followUps" class="size-4 accent-primary" ${prefs?.followUps !== false ? 'checked' : ''}>
+                </label>
+
+                <label class="flex items-center justify-between gap-3 cursor-pointer">
+                  <span>Weekly Curated Intelligence Digest</span>
+                  <input type="checkbox" name="weeklyDigest" class="size-4 accent-primary" ${prefs?.weeklyDigest !== false ? 'checked' : ''}>
+                </label>
+              </div>
+
+              <!-- Quiet Hours & Timezone -->
+              <div class="p-4 rounded-2xl bg-muted/20 border border-foreground/10 space-y-3">
+                <div class="font-bold uppercase tracking-wider text-primary text-[10px]">Quiet Hours & Timezone</div>
+
+                <label class="flex items-center justify-between gap-3 cursor-pointer">
+                  <span>Enable Quiet Hours</span>
+                  <input type="checkbox" name="quietHoursEnabled" class="size-4 accent-primary" ${quietHours.enabled !== false ? 'checked' : ''}>
+                </label>
+
+                <div class="grid grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label class="text-[10px] text-muted-foreground uppercase block mb-1">Start Time</label>
+                    <input type="time" name="quietHoursStart" value="${quietHours.start || '22:00'}" class="w-full bg-background border border-foreground/20 rounded-xl p-2 font-mono text-xs focus:outline-none focus:border-primary">
+                  </div>
+                  <div>
+                    <label class="text-[10px] text-muted-foreground uppercase block mb-1">End Time</label>
+                    <input type="time" name="quietHoursEnd" value="${quietHours.end || '08:00'}" class="w-full bg-background border border-foreground/20 rounded-xl p-2 font-mono text-xs focus:outline-none focus:border-primary">
+                  </div>
+                </div>
+
+                <label class="flex items-center justify-between gap-3 cursor-pointer pt-2 border-t border-foreground/5 text-[11px]">
+                  <span>Allow Urgent / Critical Deadlines During Quiet Hours</span>
+                  <input type="checkbox" name="allowUrgent" class="size-4 accent-primary" ${quietHours.allowUrgent !== false ? 'checked' : ''}>
+                </label>
+
+                <div class="pt-2 border-t border-foreground/5">
+                  <label class="text-[10px] text-muted-foreground uppercase block mb-1">Your Timezone</label>
+                  <select name="timezone" class="w-full bg-background border border-foreground/20 rounded-xl p-2.5 font-mono text-xs focus:outline-none focus:border-primary">
+                    <option value="Asia/Kolkata" ${prefs?.timezone === 'Asia/Kolkata' ? 'selected' : ''}>Asia/Kolkata (IST, UTC+5:30)</option>
+                    <option value="UTC" ${prefs?.timezone === 'UTC' ? 'selected' : ''}>UTC (Coordinated Universal Time)</option>
+                    <option value="America/New_York" ${prefs?.timezone === 'America/New_York' ? 'selected' : ''}>America/New_York (EST/EDT)</option>
+                    <option value="America/Los_Angeles" ${prefs?.timezone === 'America/Los_Angeles' ? 'selected' : ''}>America/Los_Angeles (PST/PDT)</option>
+                    <option value="Europe/London" ${prefs?.timezone === 'Europe/London' ? 'selected' : ''}>Europe/London (GMT/BST)</option>
+                    <option value="Asia/Singapore" ${prefs?.timezone === 'Asia/Singapore' ? 'selected' : ''}>Asia/Singapore (SGT, UTC+8)</option>
+                    <option value="Asia/Tokyo" ${prefs?.timezone === 'Asia/Tokyo' ? 'selected' : ''}>Asia/Tokyo (JST, UTC+9)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between pt-2">
+                <span id="save-status-msg" class="font-mono text-[10px] text-primary"></span>
+                <button type="submit" class="px-5 py-2.5 bg-foreground text-background rounded-xl font-bold uppercase hover:bg-primary transition-colors">
+                  Save Preferences
+                </button>
+              </div>
+            </form>
+          `}
+        </div>
+
+      </div>
+    `;
+
+    // Setup interactive handlers
+    document.getElementById("close-notif-modal")?.addEventListener("click", () => modal.classList.add("hidden"));
+    
+    document.getElementById("tab-notifs-btn")?.addEventListener("click", () => {
+      currentTab = "notifications";
+      renderModalContent();
+    });
+
+    document.getElementById("tab-prefs-btn")?.addEventListener("click", () => {
+      currentTab = "preferences";
+      renderModalContent();
+    });
+
+    document.getElementById("toggle-filter-unread")?.addEventListener("click", () => {
+      filterUnreadOnly = !filterUnreadOnly;
+      renderModalContent();
+    });
+
+    document.getElementById("mark-all-read-btn")?.addEventListener("click", async () => {
+      await markAllNotificationsRead();
+      renderModalContent();
+    });
+
+    // Mark single read
+    modal.querySelectorAll(".btn-mark-read").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.notifId;
+        if (id) {
+          await markNotificationRead(id);
+          renderModalContent();
+        }
+      });
+    });
+
+    // Snooze buttons
+    modal.querySelectorAll(".btn-snooze").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.notifId;
+        const hours = btn.dataset.snoozeHours;
+        const days = btn.dataset.snoozeDays;
+        if (id) {
+          await snoozeNotification(id, hours ? { hours: Number(hours) } : { days: Number(days) });
+          renderModalContent();
+        }
+      });
+    });
+
+    // Unsnooze button
+    modal.querySelectorAll(".btn-unsnooze").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.notifId;
+        if (id) {
+          await unsnoozeNotification(id);
+          renderModalContent();
+        }
+      });
+    });
+
+    // Preferences form
+    const rangeScore = document.getElementById("range-min-score");
+    const labelScore = document.getElementById("label-min-score");
+    rangeScore?.addEventListener("input", (e) => {
+      if (labelScore) labelScore.textContent = `${e.target.value}%`;
+    });
+
+    const prefsForm = document.getElementById("notif-prefs-form");
+    prefsForm?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(prefsForm);
+      const updatePayload = {
+        highMatch: fd.has("highMatch"),
+        savedDeadlines: fd.has("savedDeadlines"),
+        interestedDeadlines: fd.has("interestedDeadlines"),
+        deadlineReminders: fd.has("deadlineReminders"),
+        deadlineChanges: fd.has("deadlineChanges"),
+        followUps: fd.has("followUps"),
+        weeklyDigest: fd.has("weeklyDigest"),
+        minMatchScore: Number(fd.get("minMatchScore") || 80),
+        timezone: fd.get("timezone") || "Asia/Kolkata",
+        quietHours: {
+          enabled: fd.has("quietHoursEnabled"),
+          start: fd.get("quietHoursStart") || "22:00",
+          end: fd.get("quietHoursEnd") || "08:00",
+          allowUrgent: fd.has("allowUrgent")
+        }
+      };
+
+      const ok = await saveNotificationPreferences(updatePayload);
+      const statusEl = document.getElementById("save-status-msg");
+      if (statusEl) {
+        statusEl.textContent = ok ? "✓ Preferences saved successfully" : "❌ Error saving preferences";
+        setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 3000);
+      }
+    });
+
+    if (window.lucide) window.lucide.createIcons();
+  }
+
+  await renderModalContent();
+}
+
 // Lucide icon generation
 document.addEventListener("DOMContentLoaded", () => {
   if (window.lucide) {
     window.lucide.createIcons();
   }
+  updateNotificationBadge();
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 17: ADMIN & SOURCE HEALTH CLIENT API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Fetch system-wide admin dashboard statistics */
+async function fetchAdminStats() {
+  try {
+    const res = await fetch("/api/admin/stats");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error("fetchAdminStats error:", err);
+    return null;
+  }
+}
+
+/** Fetch all tracked sources and health metrics */
+async function fetchAdminSources() {
+  try {
+    const res = await fetch("/api/admin/sources");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.sources || [];
+  } catch (err) {
+    console.error("fetchAdminSources error:", err);
+    return [];
+  }
+}
+
+/** Enable or disable an ingestion source */
+async function toggleAdminSource(sourceId, enabled) {
+  try {
+    const res = await fetch(`/api/admin/sources/${encodeURIComponent(sourceId)}/toggle`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error("toggleAdminSource error:", err);
+    return { success: false, error: err.message };
+  }
+}
+
+/** Trigger ingestion for a specific source or all enabled sources */
+async function triggerAdminIngestion(sourceId = null, force = false) {
+  try {
+    const endpoint = sourceId 
+      ? `/api/admin/sources/${encodeURIComponent(sourceId)}/ingest`
+      : "/api/admin/ingestion/run";
+    
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force })
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.error("triggerAdminIngestion error:", err);
+    return { success: false, error: err.message };
+  }
+}
+
+/** Fetch inspection failures across sources */
+async function fetchAdminFailures(sourceId = null, limit = 50) {
+  try {
+    const url = `/api/admin/sources/failures?${sourceId ? `sourceId=${encodeURIComponent(sourceId)}&` : ""}limit=${limit}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.failures || [];
+  } catch (err) {
+    console.error("fetchAdminFailures error:", err);
+    return [];
+  }
+}
+
+/** Fetch unverified and AI-generated opportunities for review */
+async function fetchAdminUnverifiedOpportunities(params = {}) {
+  try {
+    const query = new URLSearchParams({
+      filter: params.filter || "all",
+      search: params.search || "",
+      category: params.category || "",
+      limit: String(params.limit || 50),
+      skip: String(params.skip || 0)
+    });
+    const res = await fetch(`/api/admin/opportunities/unverified?${query.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error("fetchAdminUnverifiedOpportunities error:", err);
+    return { opportunities: [], total: 0 };
+  }
+}
+
+/** Verify an opportunity and promote it to active/verified */
+async function verifyAdminOpportunity(oppId) {
+  try {
+    const res = await fetch(`/api/admin/opportunities/${encodeURIComponent(oppId)}/verify`, {
+      method: "POST"
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error("verifyAdminOpportunity error:", err);
+    return { success: false, error: err.message };
+  }
+}
+
+/** Reject / deactivate an unverified opportunity */
+async function rejectAdminOpportunity(oppId, reason = "Rejected by administrator") {
+  try {
+    const res = await fetch(`/api/admin/opportunities/${encodeURIComponent(oppId)}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error("rejectAdminOpportunity error:", err);
+    return { success: false, error: err.message };
+  }
+}
+
 

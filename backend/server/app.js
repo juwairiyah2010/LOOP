@@ -5,6 +5,7 @@ import { RemotiveInternshipsAdapter } from "./ingestion/adapters/remotive_intern
 import { ArbeitnowOpportunitiesAdapter } from "./ingestion/adapters/arbeitnow_opportunities.adapter.js";
 import { IngestionPipeline } from "./ingestion/pipeline.js";
 import { SampleSourceAdapter } from "./ingestion/sample.adapter.js";
+import { SourceManager } from "./ingestion/source_manager.js";
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 import express from "express";
@@ -30,6 +31,7 @@ import {
 import { generatePersonalizedOpportunities, analyzeResumePdf } from "./gemini.server.js";
 import { aiService } from "./ai/index.js";
 import { searchOpportunitiesByNaturalLanguage } from "./search/natural_search.js";
+import { NotificationEngine } from "./notifications/engine.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -171,7 +173,28 @@ app.get("/api/auth/me", softAuth, async (req, res) => {
   if (!req.user) {
     return res.json(null);
   }
-  return res.json({ userId: req.user.userId, name: req.user.name });
+  let isAdmin = false;
+  let role = "user";
+  try {
+    const users = await getUsersCollection();
+    const dbUser = await users.findOne({ _id: toObjectId(req.user.userId) });
+    isAdmin = Boolean(
+      dbUser?.isAdmin === true || 
+      dbUser?.role === "admin" || 
+      req.user.role === "admin" || 
+      req.user.isAdmin === true ||
+      req.user.name === "admin" ||
+      req.user.name === "shresth261" ||
+      (process.env.ADMIN_USERS && process.env.ADMIN_USERS.split(",").map(u => u.trim()).includes(req.user.name))
+    );
+    role = isAdmin ? "admin" : (dbUser?.role || "user");
+  } catch {}
+  return res.json({ 
+    userId: req.user.userId, 
+    name: req.user.name,
+    role,
+    isAdmin
+  });
 });
 
 // Authenticate: Login or Signup dynamically
@@ -204,11 +227,14 @@ app.post("/api/auth/authenticate", async (req, res) => {
 
     if (!user) {
       // Register new user
+      const isDefaultAdmin = name === "admin" || name === "shresth261";
       const passwordHash = await bcrypt.hash(password, 10);
       const newUser = {
         name,
         passwordHash,
         createdAt: new Date(),
+        role: isDefaultAdmin ? "admin" : "user",
+        isAdmin: isDefaultAdmin,
         profile: { ...DEFAULT_PROFILE, name },
         saved: [],
         interested: [],
@@ -225,8 +251,16 @@ app.post("/api/auth/authenticate", async (req, res) => {
       }
     }
 
+    const isAdmin = Boolean(
+      user.isAdmin === true || 
+      user.role === "admin" || 
+      user.name === "admin" || 
+      user.name === "shresth261" ||
+      (process.env.ADMIN_USERS && process.env.ADMIN_USERS.split(",").map(u => u.trim()).includes(user.name))
+    );
+
     const token = jwt.sign(
-      { userId: user._id.toString(), name: user.name },
+      { userId: user._id.toString(), name: user.name, role: isAdmin ? "admin" : (user.role || "user"), isAdmin },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
@@ -239,7 +273,12 @@ app.post("/api/auth/authenticate", async (req, res) => {
       maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
     });
 
-    return res.json({ success: true, userId: user._id.toString() });
+    return res.json({ 
+      success: true, 
+      userId: user._id.toString(),
+      isAdmin,
+      role: isAdmin ? "admin" : (user.role || "user")
+    });
   } catch (error) {
     console.error("Auth error:", error);
     return res.status(500).json({ error: error.message });
@@ -346,6 +385,54 @@ async function getDbUser(userIdStr) {
   const dbUser = await users.findOne({ _id: toObjectId(userIdStr) });
   if (!dbUser) throw new Error("User not found");
   return { users, dbUser };
+}
+
+// Admin Authorization Middleware (Protects admin & ingestion endpoints)
+async function requireAdmin(req, res, next) {
+  // 1. Admin API key check (Authorization header or x-admin-key)
+  const adminApiKey = process.env.ADMIN_API_KEY || "loop_admin_secret_key_2026";
+  const incomingKey = req.headers["x-admin-key"] || 
+    (req.headers.authorization && req.headers.authorization.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
+
+  if (incomingKey && incomingKey === adminApiKey) {
+    req.isAdmin = true;
+    req.adminIdentity = "api_key";
+    return next();
+  }
+
+  // 2. Cookie session JWT verification
+  const token = req.cookies.auth_token;
+  if (!token) {
+    return res.status(401).json({ error: "Authentication required for admin access" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+
+    const users = await getUsersCollection();
+    const dbUser = await users.findOne({ _id: toObjectId(decoded.userId) });
+
+    const isAdminUser = Boolean(
+      dbUser?.isAdmin === true || 
+      dbUser?.role === "admin" || 
+      decoded.role === "admin" || 
+      decoded.isAdmin === true ||
+      decoded.name === "admin" ||
+      decoded.name === "shresth261" ||
+      (process.env.ADMIN_USERS && process.env.ADMIN_USERS.split(",").map(u => u.trim()).includes(decoded.name))
+    );
+
+    if (!isAdminUser) {
+      return res.status(403).json({ error: "Forbidden: Admin privileges required" });
+    }
+
+    req.isAdmin = true;
+    req.adminIdentity = decoded.name || "admin";
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid session token for admin access" });
+  }
 }
 
 // Fetch user profile (avatar excluded — fetch separately from /api/user/avatar)
@@ -1089,6 +1176,104 @@ app.get("/api/user/lifecycle/:oppId", requireAuth, async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------
+// NOTIFICATION INTELLIGENCE ENDPOINTS (Phase 16)
+// ----------------------------------------------------------------------
+
+// GET /api/notifications — Retrieve user notifications
+app.get("/api/notifications", requireAuth, async (req, res) => {
+  try {
+    const { dbUser } = await getDbUser(req.user.userId);
+    const unreadOnly = req.query.unreadOnly === "true";
+    const autoEvaluate = req.query.evaluate !== "false";
+
+    if (autoEvaluate) {
+      await NotificationEngine.evaluateTriggers(dbUser);
+    }
+
+    const data = await NotificationEngine.getUserNotifications(req.user.userId, { unreadOnly });
+    res.setHeader("Cache-Control", "private, no-cache");
+    return res.json(data);
+  } catch (error) {
+    console.error("GET /api/notifications error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/check-triggers — Manually scan and evaluate triggers
+app.post("/api/notifications/check-triggers", requireAuth, async (req, res) => {
+  try {
+    const { dbUser } = await getDbUser(req.user.userId);
+    const result = await NotificationEngine.evaluateTriggers(dbUser, { forceDigest: req.body?.forceDigest });
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error("POST /api/notifications/check-triggers error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/:id/read — Mark single notification as read
+app.post("/api/notifications/:id/read", requireAuth, async (req, res) => {
+  try {
+    await NotificationEngine.markAsRead(req.params.id, req.user.userId);
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/read-all — Mark all notifications as read
+app.post("/api/notifications/read-all", requireAuth, async (req, res) => {
+  try {
+    await NotificationEngine.markAllAsRead(req.user.userId);
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/:id/snooze — Snooze notification
+app.post("/api/notifications/:id/snooze", requireAuth, async (req, res) => {
+  try {
+    const result = await NotificationEngine.snoozeNotification(req.params.id, req.user.userId, req.body);
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/:id/unsnooze — Unsnooze notification
+app.post("/api/notifications/:id/unsnooze", requireAuth, async (req, res) => {
+  try {
+    const result = await NotificationEngine.unsnoozeNotification(req.params.id, req.user.userId);
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/notifications/preferences — Get current notification preferences
+app.get("/api/notifications/preferences", requireAuth, async (req, res) => {
+  try {
+    const { dbUser } = await getDbUser(req.user.userId);
+    const preferences = NotificationEngine.getEffectivePreferences(dbUser);
+    res.setHeader("Cache-Control", "private, max-age=10");
+    return res.json({ preferences });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/preferences — Update notification preferences
+app.post("/api/notifications/preferences", requireAuth, async (req, res) => {
+  try {
+    const updated = await NotificationEngine.updatePreferences(req.user.userId, req.body);
+    return res.json({ success: true, preferences: updated });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // Delete a lifecycle entry (removes from all legacy lists too)
 app.delete("/api/user/lifecycle/:oppId", requireAuth, async (req, res) => {
   try {
@@ -1441,19 +1626,156 @@ app.post("/api/matching/evaluate", async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// DATA INGESTION ENGINE ENDPOINT
+// DATA INGESTION & ADMIN SOURCE-HEALTH ENDPOINTS (PHASE 17)
+// Protected: Requires Admin Privileges or Admin API Key
 // ----------------------------------------------------------------------
-app.post("/api/ingestion/run", requireAuth, async (req, res) => {
+
+// Legacy / Direct Ingestion endpoint — Protected by requireAdmin
+app.post("/api/ingestion/run", requireAdmin, async (req, res) => {
   try {
-    const { adapter } = req.body || {};
-    const pipeline = new IngestionPipeline([
-      new DevToHackathonsAdapter(),
-      new RemotiveInternshipsAdapter(),
-      new ArbeitnowOpportunitiesAdapter(),
-      new SampleSourceAdapter()
-    ]);
-    const report = await pipeline.run(adapter || null);
+    const { adapter, sourceId, force } = req.body || {};
+    const report = await SourceManager.triggerIngestion({
+      sourceId: sourceId || adapter || null,
+      triggeredBy: req.adminIdentity || "admin",
+      force: Boolean(force)
+    });
     return res.json({ success: true, report });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/admin/stats — Overall dashboard statistics
+app.get("/api/admin/stats", requireAdmin, async (req, res) => {
+  try {
+    const stats = await SourceManager.getSystemStats();
+    return res.json(stats);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/admin/sources — List all sources with health metrics
+app.get("/api/admin/sources", requireAdmin, async (req, res) => {
+  try {
+    const sources = await SourceManager.getSources();
+    return res.json({ sources });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/admin/sources/:id — Specific source health
+app.get("/api/admin/sources/:id", requireAdmin, async (req, res) => {
+  try {
+    const source = await SourceManager.getSource(req.params.id);
+    if (!source) return res.status(404).json({ error: "Source not found" });
+    return res.json({ source });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /api/admin/sources/:id/toggle — Enable/disable source
+app.patch("/api/admin/sources/:id/toggle", requireAdmin, async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    if (enabled === undefined) {
+      return res.status(400).json({ error: "Field 'enabled' (boolean) is required" });
+    }
+    const updated = await SourceManager.toggleSource(req.params.id, enabled);
+    return res.json({ success: true, source: updated });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/admin/sources/:id/status — Enable/disable source alias
+app.post("/api/admin/sources/:id/status", requireAdmin, async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const updated = await SourceManager.toggleSource(req.params.id, enabled);
+    return res.json({ success: true, source: updated });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/admin/sources/:id/ingest — Trigger ingestion for specific source
+app.post("/api/admin/sources/:id/ingest", requireAdmin, async (req, res) => {
+  try {
+    const report = await SourceManager.triggerIngestion({
+      sourceId: req.params.id,
+      triggeredBy: req.adminIdentity || "admin",
+      force: Boolean(req.body?.force)
+    });
+    return res.json({ success: true, report });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/admin/ingestion/run — Trigger ingestion across all enabled sources
+app.post("/api/admin/ingestion/run", requireAdmin, async (req, res) => {
+  try {
+    const report = await SourceManager.triggerIngestion({
+      sourceId: req.body?.sourceId || req.body?.adapter || null,
+      triggeredBy: req.adminIdentity || "admin",
+      force: Boolean(req.body?.force)
+    });
+    return res.json({ success: true, report });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/admin/sources/failures — Inspect recent ingestion failures
+app.get("/api/admin/sources/failures", requireAdmin, async (req, res) => {
+  try {
+    const { sourceId, limit } = req.query;
+    const failures = await SourceManager.getFailures({
+      sourceId: sourceId || null,
+      limit: Number(limit) || 50
+    });
+    return res.json(failures);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/admin/opportunities/unverified — Inspect unverified & AI-generated opportunities
+app.get("/api/admin/opportunities/unverified", requireAdmin, async (req, res) => {
+  try {
+    const { filter, search, category, limit, skip } = req.query;
+    const result = await SourceManager.getUnverifiedOpportunities({
+      filter: filter || "all",
+      search: search || "",
+      category: category || "",
+      limit: Number(limit) || 50,
+      skip: Number(skip) || 0
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/admin/opportunities/:id/verify — Verify opportunity
+app.post("/api/admin/opportunities/:id/verify", requireAdmin, async (req, res) => {
+  try {
+    const result = await SourceManager.verifyOpportunity(req.params.id, req.adminIdentity || "admin");
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/admin/opportunities/:id/reject — Reject opportunity
+app.post("/api/admin/opportunities/:id/reject", requireAdmin, async (req, res) => {
+  try {
+    const { reason } = req.body || {};
+    const result = await SourceManager.rejectOpportunity(req.params.id, reason, req.adminIdentity || "admin");
+    return res.json(result);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1855,6 +2177,10 @@ app.get("/calendar", (req, res) => {
 
 app.get("/tracker", (req, res) => {
   res.sendFile(path.join(__dirname, "../../frontend/tracker.html"));
+});
+
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "../../frontend/admin.html"));
 });
 
 app.get("/opportunity/:id", (req, res) => {

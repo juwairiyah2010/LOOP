@@ -472,6 +472,56 @@ export const mockOpportunities = [
       minimum_gpa: 3.0
     },
     application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString()
+  },
+  {
+    id: "opp_ai_synth_25",
+    title: "Generative AI Research & Prompt Engineering Fellowship 2026",
+    organization: "AI Horizon Collaborative",
+    category: "fellowship",
+    location: "Remote",
+    deadline: new Date(Date.now() + 1000 * 60 * 60 * 24 * 28).toISOString(),
+    tags: ["AI", "Generative AI", "LLM", "Research", "Python"],
+    description: "Synthesized draft submission: 6-month research fellowship exploring evaluation benchmarks and autonomous agent systems. Requires admin fact-checking and official sponsor verification.",
+    apply_url: "https://example.com/ai-horizon-fellowship",
+    posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
+    participants: 15,
+    featured: false,
+    prize_amount: "$12,000 stipend",
+    work_mode: "remote",
+    verified: false,
+    is_ai_generated: true,
+    source: "ai_generated",
+    active: true,
+    eligibility: {
+      allowed_majors: ["CSE", "Data Science", "all"],
+      allowed_years: [3, 4, "grad", "all"]
+    },
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString()
+  },
+  {
+    id: "opp_unverified_26",
+    title: "Quantum Information Theory Summer Student Program",
+    organization: "Global Quantum Initiative",
+    category: "internship",
+    location: "Bengaluru, India",
+    deadline: new Date(Date.now() + 1000 * 60 * 60 * 24 * 40).toISOString(),
+    tags: ["Quantum", "Physics", "Python", "Algorithms", "Internship"],
+    description: "Automatically ingested opportunity from academic forum. Pending administrative verification of dates, stipend terms, and official application endpoint.",
+    apply_url: "https://example.com/quantum-initiative-internship",
+    posted_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 1).toISOString(),
+    participants: 40,
+    featured: false,
+    prize_amount: "₹45,000 / month",
+    work_mode: "hybrid",
+    verified: false,
+    is_ai_generated: false,
+    source: "external_crawler",
+    active: true,
+    eligibility: {
+      allowed_majors: ["Physics", "CSE", "Mathematics"],
+      allowed_years: [2, 3, 4]
+    },
+    application_start_date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString()
   }
 ];
 

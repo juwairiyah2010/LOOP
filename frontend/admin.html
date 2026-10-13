@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LOOP — Admin & Source Health Console</title>
+  <meta name="description" content="Secure administration dashboard to monitor source health, trigger ingestion pipelines, inspect failures, and verify AI-generated opportunities.">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            background: 'var(--background)', foreground: 'var(--foreground)',
+            primary: 'var(--primary)', 'primary-foreground': 'var(--primary-foreground)',
+            secondary: 'var(--secondary)', 'secondary-foreground': 'var(--secondary-foreground)',
+            muted: 'var(--muted)', 'muted-foreground': 'var(--muted-foreground)',
+            border: 'var(--border)', card: 'var(--card)',
+            lime: 'var(--lime)', amber: 'var(--amber)', indigo: 'var(--indigo)',
+          },
+          fontFamily: {
+            display: ['Anton','Impact','sans-serif'],
+            body: ['Inter','system-ui','sans-serif'],
+            mono: ['JetBrains Mono','ui-monospace','monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .admin-card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+    .admin-card:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
+    .animate-entry { animation: entryAnim 0.35s cubic-bezier(0.22,1,0.36,1) both; }
+    @keyframes entryAnim { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+  </style>
+</head>
+<body class="min-h-screen bg-background text-foreground font-body">
+
+  <!-- Marquee Ticker -->
+  <div class="sticky top-0 z-50 bg-primary text-primary-foreground py-1.5 overflow-hidden border-b-2 border-foreground">
+    <div id="marquee-ticker" class="marquee-content gap-10 whitespace-nowrap font-mono text-[11px] font-bold uppercase tracking-tight">
+      <span class="inline-flex items-center gap-3">
+        <span>LOOP · Secure Admin Console · Source Health & Verification</span>
+        <span class="opacity-50">✦</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- Header Navigation -->
+  <header class="border-b-2 border-foreground bg-background/80 backdrop-blur-md sticky top-[33px] z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 text-foreground no-underline group">
+        <span class="font-display text-3xl tracking-tighter uppercase font-bold group-hover:text-primary transition-colors">LOOP</span>
+        <span class="font-mono text-[10px] font-bold uppercase bg-primary text-primary-foreground px-2 py-0.5 rounded-full border border-foreground">ADMIN</span>
+      </a>
+      <nav id="header-nav" class="flex items-center gap-4">
+        <!-- Rendered by common.js -->
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8 animate-entry">
+
+    <!-- Hero / Admin Intro -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b-2 border-foreground">
+      <div>
+        <div class="flex items-center gap-3">
+          <span class="size-3 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span class="font-mono text-xs uppercase tracking-wider text-muted-foreground font-bold">Admin Privileges Verified · Source Health System</span>
+        </div>
+        <h1 class="font-display text-4xl sm:text-5xl uppercase tracking-tight mt-1">Source Health & Ingestion</h1>
+        <p class="font-mono text-xs sm:text-sm text-muted-foreground mt-1 max-w-2xl">
+          Track aggregator pipelines, manage external crawlers, inspect failure diagnostics, and verify AI-generated opportunity candidates before public distribution.
+        </p>
+      </div>
+
+      <div class="flex items-center gap-3 flex-wrap">
+        <button id="btn-run-all" class="px-5 py-2.5 bg-foreground text-background font-mono text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-primary transition-all flex items-center gap-2 shadow-sm">
+          <i data-lucide="zap" class="size-4"></i>
+          <span>Ingest All Enabled</span>
+        </button>
+        <button id="btn-refresh-all" class="p-2.5 border-2 border-foreground rounded-xl hover:bg-foreground/5 transition-colors font-mono text-xs" title="Refresh Dashboard">
+          <i data-lucide="rotate-cw" class="size-4"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Status Banner (for run reports) -->
+    <div id="status-banner" class="hidden p-4 rounded-2xl border-2 font-mono text-xs transition-all"></div>
+
+    <!-- Summary Metrics Cards -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div class="p-4 rounded-2xl border-2 border-foreground bg-card flex flex-col justify-between">
+        <span class="font-mono text-[10px] text-muted-foreground uppercase font-bold">Total Sources</span>
+        <span id="metric-total-sources" class="font-display text-3xl mt-1">0</span>
+        <span class="font-mono text-[9px] text-muted-foreground mt-1">Configured</span>
+      </div>
+
+      <div class="p-4 rounded-2xl border-2 border-foreground bg-card flex flex-col justify-between">
+        <span class="font-mono text-[10px] text-emerald-600 uppercase font-bold">Healthy</span>
+        <span id="metric-healthy-sources" class="font-display text-3xl text-emerald-600 mt-1">0</span>
+        <span class="font-mono text-[9px] text-muted-foreground mt-1">Zero Errors</span>
+      </div>
+
+      <div class="p-4 rounded-2xl border-2 border-foreground bg-card flex flex-col justify-between">
+        <span class="font-mono text-[10px] text-red-600 uppercase font-bold">Failing / Degraded</span>
+        <span id="metric-failing-sources" class="font-display text-3xl text-red-600 mt-1">0</span>
+        <span class="font-mono text-[9px] text-muted-foreground mt-1">Needs Attention</span>
+      </div>
+
+      <div class="p-4 rounded-2xl border-2 border-foreground bg-card flex flex-col justify-between">
+        <span class="font-mono text-[10px] text-muted-foreground uppercase font-bold">Total Ingested</span>
+        <span id="metric-total-opps" class="font-display text-3xl mt-1">0</span>
+        <span class="font-mono text-[9px] text-muted-foreground mt-1">Opportunities</span>
+      </div>
+
+      <div class="p-4 rounded-2xl border-2 border-foreground bg-card flex flex-col justify-between">
+        <span class="font-mono text-[10px] text-amber-600 uppercase font-bold">Unverified</span>
+        <span id="metric-unverified-opps" class="font-display text-3xl text-amber-600 mt-1">0</span>
+        <span class="font-mono text-[9px] text-muted-foreground mt-1">Pending Check</span>
+      </div>
+
+      <div class="p-4 rounded-2xl border-2 border-foreground bg-card flex flex-col justify-between">
+        <span class="font-mono text-[10px] text-indigo-600 uppercase font-bold">AI Synthesized</span>
+        <span id="metric-ai-opps" class="font-display text-3xl text-indigo-600 mt-1">0</span>
+        <span class="font-mono text-[9px] text-muted-foreground mt-1">Requires Fact-Check</span>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex items-center gap-2 p-1.5 bg-muted/30 border-2 border-foreground rounded-2xl font-mono text-xs font-bold uppercase w-fit overflow-x-auto">
+      <button id="tab-btn-sources" class="px-4 py-2 rounded-xl bg-foreground text-background shadow-sm transition-all flex items-center gap-2">
+        <i data-lucide="layers" class="size-3.5"></i>
+        <span>Sources & Live Health</span>
+      </button>
+      <button id="tab-btn-failures" class="px-4 py-2 rounded-xl text-muted-foreground hover:text-foreground transition-all flex items-center gap-2">
+        <i data-lucide="alert-triangle" class="size-3.5"></i>
+        <span>Failures & Diagnostics</span>
+      </button>
+      <button id="tab-btn-unverified" class="px-4 py-2 rounded-xl text-muted-foreground hover:text-foreground transition-all flex items-center gap-2">
+        <i data-lucide="check-circle" class="size-3.5"></i>
+        <span>Unverified & AI Opportunities</span>
+      </button>
+    </div>
+
+    <!-- ─────────────────────────────────────────────────────────────────────── -->
+    <!-- TAB 1: Sources & Live Health Grid -->
+    <!-- ─────────────────────────────────────────────────────────────────────── -->
+    <section id="tab-section-sources" class="space-y-4">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <h2 class="font-display text-2xl uppercase tracking-tight">Aggregator Pipelines</h2>
+        <span class="font-mono text-xs text-muted-foreground">Each source tracks status, timing, duplicates, and execution statistics.</span>
+      </div>
+
+      <div id="sources-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Rendered dynamically -->
+        <div class="p-12 text-center col-span-2 font-mono text-xs text-muted-foreground animate-pulse">
+          Loading source health states...
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────────────────────────────── -->
+    <!-- TAB 2: Failures & Diagnostics -->
+    <!-- ─────────────────────────────────────────────────────────────────────── -->
+    <section id="tab-section-failures" class="space-y-4 hidden">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 class="font-display text-2xl uppercase tracking-tight">Failure & Error Diagnostics</h2>
+          <p class="font-mono text-xs text-muted-foreground mt-0.5">Audit log of crawler timeouts, schema validation rejections, and network errors.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <select id="failures-filter-source" class="bg-card border-2 border-foreground rounded-xl px-3 py-1.5 font-mono text-xs focus:outline-none">
+            <option value="">All Sources</option>
+            <option value="devto_hackathons">Dev.to Hackathons</option>
+            <option value="remotive_internships">Remotive Internships</option>
+            <option value="arbeitnow_opportunities">Arbeitnow Opportunities</option>
+            <option value="sample_aggregator">Sample Aggregator</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="failures-container" class="space-y-3">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────────────────────────────── -->
+    <!-- TAB 3: Unverified & AI-Generated Opportunities Review -->
+    <!-- ─────────────────────────────────────────────────────────────────────── -->
+    <section id="tab-section-unverified" class="space-y-4 hidden">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-foreground/10">
+        <div>
+          <h2 class="font-display text-2xl uppercase tracking-tight">Fact-Check & Verification Queue</h2>
+          <p class="font-mono text-xs text-muted-foreground mt-0.5">
+            Strict Quality Directive: Never publish unverified or AI-generated data without administrative verification.
+          </p>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap font-mono text-xs">
+          <input type="text" id="unverified-search-input" placeholder="Search title or organization..." class="bg-card border-2 border-foreground rounded-xl px-3 py-1.5 focus:outline-none w-56">
+          <select id="unverified-filter-type" class="bg-card border-2 border-foreground rounded-xl px-3 py-1.5 focus:outline-none">
+            <option value="all">All Pending</option>
+            <option value="ai_generated">Only AI Synthesized</option>
+            <option value="unverified">Only Unverified Crawlers</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="unverified-container" class="space-y-3">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Inspection Modal for Details / JSON -->
+  <div id="admin-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm hidden animate-entry">
+    <div class="relative w-full max-w-2xl bg-card border-2 border-foreground rounded-3xl p-6 shadow-2xl flex flex-col max-h-[90vh]">
+      <div class="flex items-center justify-between pb-4 border-b border-foreground/10">
+        <h3 id="modal-title" class="font-display text-2xl uppercase tracking-tight">Opportunity Inspector</h3>
+        <button id="modal-close-btn" class="size-8 rounded-full border border-foreground/30 hover:border-foreground flex items-center justify-center font-bold">✕</button>
+      </div>
+      <div id="modal-body" class="overflow-y-auto flex-1 py-4 font-mono text-xs space-y-4">
+        <!-- Injected -->
+      </div>
+    </div>
+  </div>
+
+  <script src="/common.js"></script>
+  <script>
+    let activeTab = "sources"; // "sources" | "failures" | "unverified"
+    let currentSources = [];
+
+    // Helper: format relative time
+    function formatTime(isoStr) {
+      if (!isoStr) return "Never";
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return "Invalid date";
+      const diffSec = Math.round((Date.now() - d.getTime()) / 1000);
+      if (diffSec < 60) return `${diffSec}s ago`;
+      const diffMin = Math.round(diffSec / 60);
+      if (diffMin < 60) return `${diffMin}m ago`;
+      const diffHour = Math.round(diffMin / 60);
+      if (diffHour < 24) return `${diffHour}h ago`;
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    }
+
+    // Helper: status badges
+    const statusBadges = {
+      healthy: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30",
+      degraded: "bg-amber-500/10 text-amber-600 border-amber-500/30",
+      failing: "bg-red-500/10 text-red-600 border-red-500/30",
+      idle: "bg-muted text-muted-foreground border-foreground/10",
+      running: "bg-blue-500/10 text-blue-600 border-blue-500/30 animate-pulse",
+      disabled: "bg-muted text-muted-foreground border-foreground/15 opacity-60"
+    };
+
+    function showBanner(type, message) {
+      const banner = document.getElementById("status-banner");
+      if (!banner) return;
+      banner.className = `p-4 rounded-2xl border-2 font-mono text-xs transition-all flex items-center justify-between gap-4 ${
+        type === "success" ? "bg-emerald-500/10 border-emerald-500 text-emerald-700 dark:text-emerald-300" :
+        type === "error" ? "bg-red-500/10 border-red-500 text-red-700 dark:text-red-300" :
+        "bg-primary/10 border-primary text-foreground"
+      }`;
+      banner.innerHTML = `<span>${message}</span><button onclick="this.parentElement.classList.add('hidden')" class="font-bold px-2 py-0.5">✕</button>`;
+      banner.classList.remove("hidden");
+    }
+
+    // Load Metrics
+    async function loadStats() {
+      const stats = await fetchAdminStats();
+      if (!stats) return;
+
+      document.getElementById("metric-total-sources").textContent = stats.sources?.total || 0;
+      document.getElementById("metric-healthy-sources").textContent = stats.sources?.healthy || 0;
+      document.getElementById("metric-failing-sources").textContent = (stats.sources?.failing || 0) + (stats.sources?.degraded || 0);
+      document.getElementById("metric-total-opps").textContent = stats.opportunities?.total || 0;
+      document.getElementById("metric-unverified-opps").textContent = stats.opportunities?.unverified || 0;
+      document.getElementById("metric-ai-opps").textContent = stats.opportunities?.aiGenerated || 0;
+    }
+
+    // Render Sources
+    async function loadSources() {
+      const sources = await fetchAdminSources();
+      currentSources = sources;
+      const container = document.getElementById("sources-grid");
+      if (!container) return;
+
+      if (sources.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-2 p-12 text-center border-2 border-dashed border-foreground/20 rounded-3xl font-mono text-xs text-muted-foreground">
+            No sources configured in database.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = sources.map(src => {
+        const badgeClass = statusBadges[src.status] || statusBadges.idle;
+        const isRunning = src.status === "running";
+        const hasErrors = (src.errors?.count || 0) > 0 || !!src.last_failure;
+
+        return `
+          <div class="admin-card p-5 rounded-3xl border-2 border-foreground bg-card flex flex-col justify-between gap-5">
+            <!-- Header -->
+            <div class="flex items-start justify-between gap-3">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                  <span class="px-2.5 py-0.5 rounded-full border text-[10px] font-mono font-bold uppercase ${badgeClass}">
+                    ● ${src.status}
+                  </span>
+                  <span class="font-mono text-[10px] uppercase text-muted-foreground">
+                    ${src.category || 'all'}
+                  </span>
+                </div>
+                <h3 class="font-sans text-base font-bold">${src.displayName || src.name}</h3>
+                <p class="font-sans text-xs text-muted-foreground">${src.description || ''}</p>
+              </div>
+
+              <!-- Enable/Disable Switch -->
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" data-source-id="${src.id || src.name}" class="toggle-source size-4 accent-primary" ${src.enabled ? 'checked' : ''}>
+                <span class="font-mono text-[11px] font-bold ${src.enabled ? 'text-primary' : 'text-muted-foreground'}">
+                  ${src.enabled ? 'ENABLED' : 'DISABLED'}
+                </span>
+              </label>
+            </div>
+
+            <!-- Health Metrics Box -->
+            <div class="grid grid-cols-4 gap-2 p-3 bg-muted/20 border border-foreground/10 rounded-2xl font-mono text-xs text-center">
+              <div>
+                <span class="text-[9px] text-muted-foreground uppercase block">Fetched</span>
+                <span class="font-bold text-sm text-foreground">${src.fetched || 0}</span>
+              </div>
+              <div>
+                <span class="text-[9px] text-muted-foreground uppercase block">Added</span>
+                <span class="font-bold text-sm text-emerald-600">+${src.added || 0}</span>
+              </div>
+              <div>
+                <span class="text-[9px] text-muted-foreground uppercase block">Updated</span>
+                <span class="font-bold text-sm text-blue-600">${src.updated || 0}</span>
+              </div>
+              <div>
+                <span class="text-[9px] text-muted-foreground uppercase block">Duplicates</span>
+                <span class="font-bold text-sm text-amber-600">${src.duplicates || 0}</span>
+              </div>
+            </div>
+
+            <!-- Timing and Error info -->
+            <div class="space-y-1 font-mono text-[10px] text-muted-foreground border-t border-foreground/5 pt-2">
+              <div class="flex items-center justify-between">
+                <span>Last Success:</span>
+                <span class="font-bold text-foreground">${formatTime(src.last_successful_run)}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span>Duration:</span>
+                <span class="font-bold text-foreground">${src.duration ? `${src.duration}ms` : '0ms'}</span>
+              </div>
+              ${hasErrors ? `
+                <div class="flex items-center justify-between text-red-600 font-bold">
+                  <span>Last Failure:</span>
+                  <span>${src.last_failure?.error || 'Validation/Processing Errors'} (${formatTime(src.last_failure?.timestamp)})</span>
+                </div>
+              ` : ''}
+            </div>
+
+            <!-- Actions Bar -->
+            <div class="flex items-center justify-between pt-2 border-t border-foreground/10 font-mono text-xs">
+              <button data-source-id="${src.id || src.name}" class="btn-ingest-source px-3.5 py-1.5 bg-foreground text-background font-bold uppercase rounded-xl hover:bg-primary transition-colors flex items-center gap-1.5" ${isRunning ? 'disabled' : ''}>
+                <i data-lucide="play" class="size-3"></i>
+                <span>${isRunning ? 'Running...' : 'Run Pipeline'}</span>
+              </button>
+
+              <button data-source-id="${src.id || src.name}" class="btn-inspect-errors px-3 py-1.5 border border-foreground/20 rounded-xl hover:border-foreground text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                <i data-lucide="terminal" class="size-3"></i>
+                <span>Diagnostics</span>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      if (window.lucide) window.lucide.createIcons();
+      attachSourceListeners();
+    }
+
+    function attachSourceListeners() {
+      // Toggle switches
+      document.querySelectorAll(".toggle-source").forEach(input => {
+        input.addEventListener("change", async (e) => {
+          const id = e.target.getAttribute("data-source-id");
+          const enabled = e.target.checked;
+          const res = await toggleAdminSource(id, enabled);
+          if (res.success) {
+            showBanner("success", `Source '${id}' ${enabled ? 'enabled' : 'disabled'} successfully.`);
+            loadSources();
+            loadStats();
+          } else {
+            showBanner("error", `Failed to toggle source: ${res.error}`);
+            e.target.checked = !enabled;
+          }
+        });
+      });
+
+      // Run buttons
+      document.querySelectorAll(".btn-ingest-source").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          const id = btn.getAttribute("data-source-id");
+          btn.disabled = true;
+          btn.innerHTML = `<span class="animate-spin">⏳</span> Ingesting...`;
+          showBanner("info", `Triggering ingestion pipeline for source '${id}'...`);
+          
+          const result = await triggerAdminIngestion(id, true);
+          if (result.success) {
+            const stats = result.report?.adapters?.[id] || {};
+            showBanner("success", `✓ Ingestion completed for '${id}'. Fetched: ${stats.fetched || 0}, Added: ${stats.added || 0}, Updated: ${stats.updated || 0}, Duplicates: ${stats.duplicate || 0}`);
+          } else {
+            showBanner("error", `Ingestion failed: ${result.error}`);
+          }
+          await loadSources();
+          await loadStats();
+        });
+      });
+
+      // Diagnostics buttons
+      document.querySelectorAll(".btn-inspect-errors").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-source-id");
+          document.getElementById("failures-filter-source").value = id;
+          switchTab("failures");
+        });
+      });
+    }
+
+    // Render Failures Tab
+    async function loadFailures() {
+      const sourceId = document.getElementById("failures-filter-source")?.value || null;
+      const failures = await fetchAdminFailures(sourceId);
+      const container = document.getElementById("failures-container");
+      if (!container) return;
+
+      if (failures.length === 0) {
+        container.innerHTML = `
+          <div class="p-12 text-center border-2 border-foreground/15 rounded-3xl bg-card font-mono text-xs">
+            <div class="text-3xl mb-2">🎉</div>
+            <div class="font-bold text-foreground text-sm uppercase">Zero Active Failures</div>
+            <div class="text-muted-foreground mt-1">All pipelines and items processed cleanly without errors.</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = failures.map(f => `
+        <div class="p-4 rounded-2xl border-2 border-red-500/30 bg-card flex flex-col md:flex-row md:items-center justify-between gap-4 font-mono text-xs">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded bg-red-500/10 text-red-600 font-bold uppercase text-[10px]">
+                Stage: ${f.stage || 'Pipeline'}
+              </span>
+              <span class="text-muted-foreground uppercase text-[10px] font-bold">
+                Source: ${f.sourceName || f.sourceId}
+              </span>
+              <span class="text-muted-foreground text-[10px]">
+                ${formatTime(f.timestamp)}
+              </span>
+            </div>
+            <div class="font-sans font-bold text-foreground text-sm">${f.message}</div>
+            ${f.itemTitle ? `<div class="text-muted-foreground text-[11px]">Affected Item: "${f.itemTitle}"</div>` : ''}
+          </div>
+
+          <div class="shrink-0 flex items-center gap-2">
+            <button onclick="retestSource('${f.sourceId}')" class="px-3 py-1.5 bg-foreground text-background rounded-xl font-bold uppercase hover:bg-primary transition-colors text-[10px]">
+              Retest Source ⚡
+            </button>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    window.retestSource = async function(id) {
+      showBanner("info", `Retesting source '${id}'...`);
+      const res = await triggerAdminIngestion(id, true);
+      if (res.success) {
+        showBanner("success", `Retest completed for '${id}'.`);
+        loadFailures();
+        loadSources();
+        loadStats();
+      } else {
+        showBanner("error", `Retest failed: ${res.error}`);
+      }
+    };
+
+    // Render Unverified & AI Opportunities Tab
+    async function loadUnverified() {
+      const filter = document.getElementById("unverified-filter-type")?.value || "all";
+      const search = document.getElementById("unverified-search-input")?.value || "";
+      const result = await fetchAdminUnverifiedOpportunities({ filter, search });
+      const container = document.getElementById("unverified-container");
+      if (!container) return;
+
+      const opps = result.opportunities || [];
+      if (opps.length === 0) {
+        container.innerHTML = `
+          <div class="p-12 text-center border-2 border-foreground/15 rounded-3xl bg-card font-mono text-xs">
+            <div class="text-3xl mb-2">✦</div>
+            <div class="font-bold text-foreground text-sm uppercase">Queue Clean</div>
+            <div class="text-muted-foreground mt-1">No unverified or AI-synthesized opportunities pending review.</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = opps.map(o => {
+        const score = o.qualityScore || 50;
+        const scoreColor = score >= 80 ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/30' : 
+                          score >= 50 ? 'text-amber-600 bg-amber-500/10 border-amber-500/30' : 
+                          'text-red-600 bg-red-500/10 border-red-500/30';
+
+        return `
+          <div class="p-5 rounded-3xl border-2 border-foreground bg-card space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+              <div class="space-y-1">
+                <div class="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase font-bold">
+                  ${o.is_ai_generated ? `
+                    <span class="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 border border-indigo-500/30">
+                      🤖 AI Generated Draft
+                    </span>
+                  ` : `
+                    <span class="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/30">
+                      ⚠️ Unverified Crawler
+                    </span>
+                  `}
+                  <span class="px-2 py-0.5 rounded-full border ${scoreColor}">
+                    Quality Score: ${score}%
+                  </span>
+                  <span class="text-muted-foreground">Source: ${o.source || 'external'}</span>
+                </div>
+                <h3 class="font-sans text-lg font-bold">${o.title}</h3>
+                <div class="font-mono text-xs text-muted-foreground">${o.organization} · ${o.category || 'general'} · ${o.work_mode || 'n/a'}</div>
+              </div>
+
+              <div class="flex items-center gap-2 shrink-0">
+                <button data-opp-id="${o.id}" class="btn-verify-opp px-4 py-2 bg-emerald-600 text-white font-mono text-xs font-bold uppercase rounded-xl hover:bg-emerald-700 transition-colors flex items-center gap-1.5 shadow-sm">
+                  <i data-lucide="check" class="size-3.5"></i>
+                  <span>Verify & Publish</span>
+                </button>
+                <button data-opp-id="${o.id}" class="btn-reject-opp px-3 py-2 border-2 border-red-500 text-red-600 font-mono text-xs font-bold uppercase rounded-xl hover:bg-red-500/10 transition-colors flex items-center gap-1">
+                  <i data-lucide="trash-2" class="size-3.5"></i>
+                  <span>Reject</span>
+                </button>
+              </div>
+            </div>
+
+            <p class="font-sans text-xs text-foreground/80 leading-relaxed">${o.description || 'No description provided.'}</p>
+
+            <div class="flex items-center justify-between pt-3 border-t border-foreground/10 font-mono text-[11px] flex-wrap gap-2 text-muted-foreground">
+              <div class="flex items-center gap-3">
+                ${o.apply_url ? `<a href="${o.apply_url}" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline font-bold">Inspect Application URL ↗</a>` : '<span class="text-red-500">Missing Apply URL</span>'}
+                <span>Deadline: ${o.deadline ? new Date(o.deadline).toLocaleDateString() : 'Rolling'}</span>
+              </div>
+              <button onclick='inspectOppModal(${JSON.stringify(o).replace(/'/g, "&apos;")})' class="hover:text-foreground underline">
+                View Raw Attributes
+              </button>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      if (window.lucide) window.lucide.createIcons();
+
+      // Listeners for verify & reject
+      document.querySelectorAll(".btn-verify-opp").forEach(b => {
+        b.addEventListener("click", async () => {
+          const id = b.getAttribute("data-opp-id");
+          b.disabled = true;
+          b.textContent = "Verifying...";
+          const res = await verifyAdminOpportunity(id);
+          if (res.success) {
+            showBanner("success", `✓ Opportunity '${id}' verified and published.`);
+            loadUnverified();
+            loadStats();
+          } else {
+            showBanner("error", `Verification failed: ${res.error}`);
+          }
+        });
+      });
+
+      document.querySelectorAll(".btn-reject-opp").forEach(b => {
+        b.addEventListener("click", async () => {
+          const id = b.getAttribute("data-opp-id");
+          if (!confirm(`Reject opportunity '${id}'? This will mark it inactive.`)) return;
+          const res = await rejectAdminOpportunity(id, "Rejected by administrative reviewer");
+          if (res.success) {
+            showBanner("info", `Opportunity '${id}' rejected.`);
+            loadUnverified();
+            loadStats();
+          } else {
+            showBanner("error", `Rejection failed: ${res.error}`);
+          }
+        });
+      });
+    }
+
+    window.inspectOppModal = function(opp) {
+      const modal = document.getElementById("admin-modal");
+      document.getElementById("modal-title").textContent = opp.title;
+      document.getElementById("modal-body").innerHTML = `
+        <div class="space-y-3">
+          <div class="p-3 bg-muted/20 rounded-xl space-y-1">
+            <div><strong>Canonical ID:</strong> ${opp.id}</div>
+            <div><strong>Organization:</strong> ${opp.organization}</div>
+            <div><strong>Source:</strong> ${opp.source} (${opp.source_id || 'n/a'})</div>
+            <div><strong>Apply URL:</strong> <a href="${opp.apply_url}" target="_blank" class="text-primary underline">${opp.apply_url}</a></div>
+            <div><strong>Quality Score:</strong> ${opp.qualityScore}%</div>
+            <div><strong>Verified:</strong> ${opp.verified}</div>
+            <div><strong>AI Generated:</strong> ${opp.is_ai_generated}</div>
+          </div>
+          <div>
+            <strong>Raw JSON Data:</strong>
+            <pre class="p-3 bg-black/80 text-emerald-400 rounded-xl overflow-x-auto text-[11px] mt-1">${JSON.stringify(opp, null, 2)}</pre>
+          </div>
+        </div>
+      `;
+      modal.classList.remove("hidden");
+    };
+
+    document.getElementById("modal-close-btn")?.addEventListener("click", () => {
+      document.getElementById("admin-modal")?.classList.add("hidden");
+    });
+
+    // Tab switching
+    function switchTab(tab) {
+      activeTab = tab;
+      const tabs = ["sources", "failures", "unverified"];
+      tabs.forEach(t => {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        const sec = document.getElementById(`tab-section-${t}`);
+        if (t === tab) {
+          btn.className = "px-4 py-2 rounded-xl bg-foreground text-background shadow-sm transition-all flex items-center gap-2";
+          sec.classList.remove("hidden");
+        } else {
+          btn.className = "px-4 py-2 rounded-xl text-muted-foreground hover:text-foreground transition-all flex items-center gap-2";
+          sec.classList.add("hidden");
+        }
+      });
+
+      if (tab === "sources") loadSources();
+      else if (tab === "failures") loadFailures();
+      else if (tab === "unverified") loadUnverified();
+    }
+
+    document.getElementById("tab-btn-sources")?.addEventListener("click", () => switchTab("sources"));
+    document.getElementById("tab-btn-failures")?.addEventListener("click", () => switchTab("failures"));
+    document.getElementById("tab-btn-unverified")?.addEventListener("click", () => switchTab("unverified"));
+
+    document.getElementById("failures-filter-source")?.addEventListener("change", loadFailures);
+    document.getElementById("unverified-filter-type")?.addEventListener("change", loadUnverified);
+    document.getElementById("unverified-search-input")?.addEventListener("input", () => {
+      clearTimeout(window._unverifiedTimer);
+      window._unverifiedTimer = setTimeout(loadUnverified, 300);
+    });
+
+    // Run All Ingestion Button
+    document.getElementById("btn-run-all")?.addEventListener("click", async () => {
+      const btn = document.getElementById("btn-run-all");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="animate-spin">⏳</span> Running Ingestion...`;
+      showBanner("info", "Executing crawler pipeline across all enabled sources...");
+
+      const res = await triggerAdminIngestion(null);
+      btn.disabled = false;
+      btn.innerHTML = `<i data-lucide="zap" class="size-4"></i><span>Ingest All Enabled</span>`;
+      if (window.lucide) window.lucide.createIcons();
+
+      if (res.success) {
+        const s = res.summary || {};
+        showBanner("success", `✓ Pipeline finished across ${s.adapters_count || 0} adapters. Fetched: ${s.total_fetched || 0}, Added: ${s.total_added || 0}, Updated: ${s.total_updated || 0}, Duplicates: ${s.total_duplicate || 0}`);
+      } else {
+        showBanner("error", `Ingestion error: ${res.error}`);
+      }
+      loadSources();
+      loadStats();
+    });
+
+    document.getElementById("btn-refresh-all")?.addEventListener("click", async () => {
+      await Promise.all([loadStats(), loadSources()]);
+      if (activeTab === "failures") loadFailures();
+      if (activeTab === "unverified") loadUnverified();
+      showBanner("info", "Dashboard refreshed.");
+    });
+
+    // Initialization
+    document.addEventListener("DOMContentLoaded", async () => {
+      initAuth();
+      await loadStats();
+      await loadSources();
+    });
+  </script>
+</body>
+</html>

@@ -59,6 +59,9 @@ let isMockDb = false;
 let mockDbData = {
   opportunities: [],
   users: [],
+  notifications: [],
+  sources: [],
+  source_health_logs: [],
   master_skills: [],
   master_interests: []
 };
@@ -71,11 +74,17 @@ function loadMockDb() {
       mockDbData = JSON.parse(fs.readFileSync(mockDbFilePath, "utf8"));
       mockDbData.opportunities = mockDbData.opportunities || [];
       mockDbData.users = mockDbData.users || [];
+      mockDbData.notifications = mockDbData.notifications || [];
+      mockDbData.sources = mockDbData.sources || [];
+      mockDbData.source_health_logs = mockDbData.source_health_logs || [];
       mockDbData.master_skills = mockDbData.master_skills || [];
       mockDbData.master_interests = mockDbData.master_interests || [];
     } else {
       // In-memory only (no file write — safe for read-only filesystems like Vercel)
       mockDbData.opportunities = mockOpportunities;
+      mockDbData.notifications = [];
+      mockDbData.sources = [];
+      mockDbData.source_health_logs = [];
       mockDbData.master_skills = [
         { name: "React" }, { name: "Node.js" }, { name: "TypeScript" }, { name: "Python" }, { name: "UI/UX" }
       ];
@@ -347,6 +356,42 @@ export class MockCollection {
     return { matchedCount: 1, modifiedCount: 1 };
   }
 
+  async updateMany(filter, update) {
+    const items = this.data.filter(item => matchQuery(item, filter));
+    let modifiedCount = 0;
+    for (const item of items) {
+      if (update.$set) {
+        for (const [key, value] of Object.entries(update.$set)) {
+          if (key.includes(".")) {
+            const parts = key.split(".");
+            let target = item;
+            for (let i = 0; i < parts.length - 1; i++) {
+              if (target[parts[i]] === undefined || target[parts[i]] === null || typeof target[parts[i]] !== "object") {
+                target[parts[i]] = {};
+              }
+              target = target[parts[i]];
+            }
+            target[parts[parts.length - 1]] = value;
+          } else {
+            item[key] = value;
+          }
+        }
+      }
+      modifiedCount++;
+    }
+    this.data = [...this.data];
+    return { matchedCount: items.length, modifiedCount };
+  }
+
+
+  async deleteOne(filter = {}) {
+    const idx = this.data.findIndex(item => matchQuery(item, filter));
+    if (idx === -1) return { deletedCount: 0, acknowledged: true };
+    const current = [...this.data];
+    current.splice(idx, 1);
+    this.data = current;
+    return { deletedCount: 1, acknowledged: true };
+  }
 
   async deleteMany(filter = {}) {
     const prevCount = this.data.length;
@@ -357,6 +402,11 @@ export class MockCollection {
     this.data = this.data.filter(item => !matchQuery(item, filter));
     const deletedCount = prevCount - this.data.length;
     return { deletedCount, acknowledged: true };
+  }
+
+  async countDocuments(filter = {}) {
+    if (!filter || Object.keys(filter).length === 0) return this.data.length;
+    return this.data.filter(item => matchQuery(item, filter)).length;
   }
 
   async createIndex(_keys, _options) {
@@ -497,6 +547,15 @@ export async function getUsersCollection() {
   return db.collection("users");
 }
 
+export async function getNotificationsCollection() {
+  if (isMockDb) {
+    return new MockCollection("notifications");
+  }
+  const db = await getDb();
+  if (!db) return new MockCollection("notifications");
+  return db.collection("notifications");
+}
+
 export async function getMasterSkillsCollection() {
   if (isMockDb) {
     return new MockCollection("master_skills");
@@ -513,6 +572,24 @@ export async function getMasterInterestsCollection() {
   const db = await getDb();
   if (!db) return new MockCollection("master_interests");
   return db.collection("master_interests");
+}
+
+export async function getSourcesCollection() {
+  if (isMockDb) {
+    return new MockCollection("sources");
+  }
+  const db = await getDb();
+  if (!db) return new MockCollection("sources");
+  return db.collection("sources");
+}
+
+export async function getSourceHealthLogsCollection() {
+  if (isMockDb) {
+    return new MockCollection("source_health_logs");
+  }
+  const db = await getDb();
+  if (!db) return new MockCollection("source_health_logs");
+  return db.collection("source_health_logs");
 }
 
 async function setupIndexes(db) {
@@ -648,4 +725,18 @@ export function buildIdsQuery(idsArray) {
     conditions.push({ _id: { $in: validObjectIds } });
   }
   return { $or: conditions };
+}
+
+export function toObjectId(id) {
+  if (!id) return id;
+  const str = String(id);
+  const isValidHex = /^[0-9a-fA-F]{24}$/.test(str);
+  if (isValidHex) {
+    try {
+      return new ObjectId(str);
+    } catch {
+      return str;
+    }
+  }
+  return id;
 }

@@ -38,13 +38,16 @@ export class IngestionPipeline {
     let grandFailed = 0;
 
     for (const adapter of targetAdapters) {
+      const adapterStart = Date.now();
       const stats = {
+        started_at: new Date(adapterStart).toISOString(),
         fetched: 0,
         added: 0,
         updated: 0,
         duplicate: 0,
         failed: 0,
-        error: null
+        error: null,
+        errors: []
       };
 
       try {
@@ -65,6 +68,13 @@ export class IngestionPipeline {
             if (!isValid) {
               stats.failed++;
               grandFailed++;
+              const errMsg = `Validation failed: ${(errors || []).join(", ")}`;
+              stats.errors.push({
+                message: errMsg,
+                itemTitle: opp?.title || "Unknown",
+                stage: "validation",
+                timestamp: new Date().toISOString()
+              });
               console.warn(`[IngestionPipeline] Validation failed for '${opp?.title}':`, errors);
               continue;
             }
@@ -89,7 +99,9 @@ export class IngestionPipeline {
 
               await coll.updateOne({ _id: existing._id }, { $set: updates });
               stats.updated++;
+              stats.duplicate++;
               grandUpdated++;
+              grandDuplicate++;
             } else {
               const newDoc = formatOpportunity({
                 ...opp,
@@ -107,13 +119,28 @@ export class IngestionPipeline {
           } catch (err) {
             stats.failed++;
             grandFailed++;
+            stats.errors.push({
+              message: err.message,
+              itemTitle: raw?.title || raw?.job_title || "Unknown",
+              stage: "processing",
+              timestamp: new Date().toISOString()
+            });
             console.warn(`[IngestionPipeline] Failed item in '${adapter.name}':`, err.message);
           }
         }
       } catch (err) {
         stats.error = err.message;
+        stats.errors.push({
+          message: `Adapter execution error: ${err.message}`,
+          stage: "adapter_run",
+          timestamp: new Date().toISOString()
+        });
         console.error(`[IngestionPipeline] Adapter '${adapter.name}' failed:`, err.message);
       }
+
+      const adapterEnd = Date.now();
+      stats.finished_at = new Date(adapterEnd).toISOString();
+      stats.duration_ms = adapterEnd - adapterStart;
 
       adapterStats[adapter.name] = stats;
     }
