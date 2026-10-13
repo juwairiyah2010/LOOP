@@ -45,8 +45,10 @@ export class DeterministicEligibilityEngine {
 
     // 2. DEGREE / BRANCH CHECK
     totalChecks++;
-    const userDegree = (p.degree || p.education || "").toLowerCase().trim();
-    const userBranch = (p.branch || p.field || p.major || "").toLowerCase().trim();
+    const rawDegree = p.degree || (typeof p.education === "string" ? p.education : (p.education?.degree || "")) || "";
+    const userDegree = String(rawDegree).toLowerCase().trim();
+    const rawBranch = p.branch || p.field || p.major || (typeof p.education === "object" ? (p.education?.major || p.education?.branch || "") : "") || "";
+    const userBranch = String(rawBranch).toLowerCase().trim();
     const allowedDegrees = toLowerArray(reqs.degrees || reqs.degree || reqs.allowed_degrees);
     const allowedBranches = toLowerArray(reqs.branches || reqs.branch || reqs.allowed_fields || reqs.field);
 
@@ -71,8 +73,8 @@ export class DeterministicEligibilityEngine {
           reasons.push("User degree and branch match requirement");
         } else {
           checks.degree_branch = "FAIL";
-          if (!degreeMatched) blockers.push(`User degree '${p.degree}' does not match required: ${allowedDegrees.join(", ")}`);
-          if (!branchMatched) blockers.push(`User branch '${p.branch || p.field}' does not match required: ${allowedBranches.join(", ")}`);
+          if (!degreeMatched) blockers.push(`User degree '${rawDegree}' does not match required: ${allowedDegrees.join(", ")}`);
+          if (!branchMatched) blockers.push(`User branch '${rawBranch}' does not match required: ${allowedBranches.join(", ")}`);
         }
       }
     } else {
@@ -83,8 +85,8 @@ export class DeterministicEligibilityEngine {
 
     // 3. YEAR / GRADUATION CHECK
     totalChecks++;
-    const userGradYear = parseInt(p.graduation_year || p.batch_year || p.graduationYear, 10);
-    const userCurrentYear = parseInt(p.current_year || p.year, 10);
+    const userGradYear = parseInt(p.graduation_year || p.batch_year || p.graduationYear || (typeof p.education === "object" ? (p.education?.graduationYear || p.education?.graduation_year) : NaN), 10);
+    const userCurrentYear = parseInt(p.current_year || p.year || (typeof p.education === "object" ? (p.education?.yearOfStudy || p.education?.year) : NaN), 10);
     const allowedGradYears = toLowerArray(reqs.graduation_years || reqs.graduation_year || reqs.batch).map(Number).filter((n) => !isNaN(n));
     const minGradYear = parseInt(reqs.min_graduation_year, 10);
     const maxGradYear = parseInt(reqs.max_graduation_year, 10);
