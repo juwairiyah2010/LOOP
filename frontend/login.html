@@ -87,6 +87,12 @@
             class="mt-4 inline-flex items-center justify-center gap-2 bg-foreground text-background px-6 py-4 rounded-xl font-mono text-xs font-bold uppercase hover:bg-primary hover:text-primary-foreground transition-colors">
             Log In <i data-lucide="arrow-right" class="size-4"></i>
           </button>
+          <div class="p-3 rounded-xl border border-foreground/15 bg-muted/20 font-mono text-[11px] flex items-center justify-between gap-2 mt-2">
+            <span class="text-muted-foreground">Admin: <strong class="text-foreground">admin</strong> / <strong class="text-foreground">admin123</strong></span>
+            <button type="button" id="fill-admin-btn" class="px-2.5 py-1 bg-foreground text-background rounded-lg font-bold uppercase hover:bg-primary transition-colors text-[10px]">
+              Fill Admin
+            </button>
+          </div>
         </form>
         <div class="mt-6 text-center">
           <button id="forgot-btn" class="font-mono text-[11px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors underline underline-offset-4">
@@ -212,8 +218,13 @@
             body: JSON.stringify({ name, password })
           });
           const data = await res.json();
-          if (res.ok && data.success) { window.location.href = "/"; }
-          else { throw new Error(data.error || "Failed to log in"); }
+          if (res.ok && data.success) { 
+            const urlParams = new URLSearchParams(window.location.search);
+            const redirectParam = urlParams.get("redirect");
+            window.location.href = redirectParam || data.redirect || "/"; 
+          } else { 
+            throw new Error(data.error || "Failed to log in"); 
+          }
         } catch (err) {
           errorBox.innerText = err.message;
           errorBox.classList.remove("hidden");
@@ -225,6 +236,11 @@
 
       document.getElementById("forgot-btn").addEventListener("click", () => showView("view-verify"));
       document.getElementById("back-to-login").addEventListener("click", () => showView("view-login"));
+      document.getElementById("fill-admin-btn")?.addEventListener("click", () => {
+        document.getElementById("username").value = "admin";
+        document.getElementById("password").value = "admin123";
+        document.getElementById("login-form")?.requestSubmit();
+      });
 
       // ---- Verify identity form ----
       let verifiedUsername = "";

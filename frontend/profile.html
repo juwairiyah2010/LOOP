@@ -77,9 +77,14 @@
         </div>
         <input type="file" id="avatar-file-input" accept="image/png, image/jpeg" class="hidden" />
         <div>
-          <h1 id="profile-display-name" class="font-display text-6xl uppercase tracking-tighter italic leading-none text-balance">
-            Student
-          </h1>
+          <div class="flex items-center gap-3 flex-wrap">
+            <h1 id="profile-display-name" class="font-display text-6xl uppercase tracking-tighter italic leading-none text-balance">
+              Student
+            </h1>
+            <span id="admin-badge" class="hidden px-2.5 py-1 rounded-xl bg-primary text-primary-foreground font-mono text-[10px] font-bold uppercase tracking-wider shadow-xs">
+              <a href="/admin" class="hover:underline flex items-center gap-1">🛡️ Admin</a>
+            </span>
+          </div>
           <p class="font-mono text-xs uppercase tracking-widest text-muted-foreground mt-3">
             Your Professional Identity
           </p>
@@ -147,7 +152,10 @@
         <!-- Interests Section -->
         <section class="bg-card border-2 border-foreground rounded-3xl shadow-stamp p-8 animate-entry [animation-delay:160ms]">
           <div class="flex justify-between items-center mb-5">
-            <label class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Interests</label>
+            <div class="flex items-center gap-2">
+              <label class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Interests</label>
+              <span id="interests-count-badge" class="font-mono text-[9px] px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-bold">0 Selected</span>
+            </div>
             <button id="add-interest-btn" class="inline-flex items-center gap-1 font-mono text-[10px] uppercase font-bold text-primary hover:underline">
               <i data-lucide="plus" class="size-3"></i> Add Your Own
             </button>
@@ -160,7 +168,10 @@
         <!-- Skills Section -->
         <section class="bg-card border-2 border-foreground rounded-3xl shadow-stamp p-8 animate-entry [animation-delay:200ms]">
           <div class="flex justify-between items-center mb-5">
-            <label class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Skills</label>
+            <div class="flex items-center gap-2">
+              <label class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Skills</label>
+              <span id="skills-count-badge" class="font-mono text-[9px] px-2 py-0.5 rounded-full bg-foreground text-background font-bold">0 Selected</span>
+            </div>
             <button id="add-skill-btn" class="inline-flex items-center gap-1 font-mono text-[10px] uppercase font-bold text-primary hover:underline">
               <i data-lucide="plus" class="size-3"></i> Add Your Own
             </button>
@@ -252,6 +263,27 @@
             Generate My Feed ✨
           </button>
         </section>
+
+        <!-- Notification Intelligence & Quiet Hours -->
+        <section class="bg-card border-2 border-foreground rounded-3xl shadow-stamp p-8 animate-entry [animation-delay:180ms]">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <span class="size-6 rounded-lg bg-primary text-primary-foreground font-mono text-xs flex items-center justify-center font-bold">🔔</span>
+              <label class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Notification Intelligence</label>
+            </div>
+          </div>
+          <p class="text-sm text-foreground/70 mb-4 leading-snug">
+            Configure quiet hours, deadline reminders, high-match alerts, and weekly digest.
+          </p>
+          <button
+            type="button"
+            id="open-notif-prefs-btn"
+            class="w-full py-3 px-4 border-2 border-foreground rounded-xl font-mono text-xs font-bold uppercase hover:bg-foreground hover:text-background transition-all flex items-center justify-center gap-2 shadow-stamp"
+          >
+            <i data-lucide="sliders" class="size-4"></i>
+            <span>Preferences & Quiet Hours</span>
+          </button>
+        </section>
       </div>
 
     </div>
@@ -310,6 +342,17 @@
 
       renderHeader(user);
       initMarqueeTicker();
+
+      if (user.isAdmin || user.role === 'admin') {
+        const adminBadge = document.getElementById("admin-badge");
+        if (adminBadge) adminBadge.classList.remove("hidden");
+      }
+
+      document.getElementById("open-notif-prefs-btn")?.addEventListener("click", () => {
+        if (typeof openNotificationModal === "function") {
+          openNotificationModal("preferences");
+        }
+      });
 
       // State variables
       let profile = {};
@@ -467,6 +510,9 @@
       function renderInterests() {
         const container = document.getElementById("interests-container");
         const userInterests = profile.interests || [];
+        const countBadge = document.getElementById("interests-count-badge");
+        if (countBadge) countBadge.textContent = `${userInterests.length} Selected`;
+
         const allInterests = Array.from(new Set([...ALL_TAGS, ...masterInterests, ...userInterests]));
         container.innerHTML = allInterests.map(t => {
           const active = userInterests.includes(t);
@@ -488,6 +534,9 @@
       function renderSkills() {
         const container = document.getElementById("skills-container");
         const userSkills = profile.skills || [];
+        const countBadge = document.getElementById("skills-count-badge");
+        if (countBadge) countBadge.textContent = `${userSkills.length} Selected`;
+
         const allSkills = Array.from(new Set([...SKILL_DICTIONARY, ...masterSkills, ...userSkills]));
         container.innerHTML = allSkills.map(t => {
           const active = userSkills.includes(t);

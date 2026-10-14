@@ -720,27 +720,585 @@ async function fetchMasterList(type) {
   return [];
 }
 
-// Render dynamic header based on authentication status
+// Compute data quality score on client side (mirrors backend/server/ingestion/quality.js)
+function computeQualityScoreClient(opp = {}) {
+  if (opp?.qualityScore !== undefined && opp.qualityScore !== null) return opp.qualityScore;
+  if (opp?.quality_score !== undefined && opp.quality_score !== null) return opp.quality_score;
+  let score = 0;
+  const source = opp.source || "legacy";
+  const trustedSources = ["devto_hackathons", "remotive_internships", "arbeitnow_opportunities", "sample_aggregator"];
+  if (trustedSources.includes(source)) score += 25;
+  else if (source === "legacy") score += 18;
+  else if (source === "ai_generated") score += 10;
+  else score += 15;
+
+  if (opp.verified === true) score += 20;
+
+  const lastVerified = opp.last_verified_at ? new Date(opp.last_verified_at) : (opp.first_seen_at ? new Date(opp.first_seen_at) : new Date());
+  const daysDiff = (Date.now() - (isNaN(lastVerified.getTime()) ? Date.now() : lastVerified.getTime())) / (1000 * 3600 * 24);
+  if (daysDiff <= 7) score += 15;
+  else if (daysDiff <= 30) score += 10;
+  else score += 5;
+
+  const applyUrl = opp.apply_url || opp.source_url || "";
+  if (typeof applyUrl === "string" && applyUrl.startsWith("https://")) score += 15;
+  else if (typeof applyUrl === "string" && applyUrl.startsWith("http://")) score += 10;
+
+  if (opp.deadline) {
+    const d = new Date(opp.deadline);
+    if (!isNaN(d.getTime())) {
+      if (d >= new Date()) score += 10;
+    } else { score += 5; }
+  } else { score += 5; }
+
+  const org = (opp.organization || "").trim();
+  if (org.length > 2 && org.toLowerCase() !== "unknown" && org.toLowerCase() !== "ai generated") score += 10;
+  else score += 3;
+
+  const desc = (opp.description || "").trim();
+  const tags = Array.isArray(opp.tags) ? opp.tags : [];
+  if (desc.length >= 80 && tags.length >= 1) score += 5;
+  else if (desc.length > 20) score += 2;
+
+  return Math.min(100, Math.max(0, score));
+}
+
+function formatOpportunitySource(source) {
+  if (!source || source === "legacy") return "LOOP Verified";
+  if (source === "devto_hackathons") return "Dev.to";
+  if (source === "remotive_internships") return "Remotive";
+  if (source === "arbeitnow_opportunities") return "Arbeitnow";
+  if (source === "sample_aggregator") return "Aggregator";
+  if (source === "ai_generated") return "AI Generated";
+  return String(source).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return "–";
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/**
+ * Standard Opportunity Card Renderer for LOOP (Neo-Brutalist design)
+ * Clearly presents:
+ * 1. Match score (visual circular gauge + percentage pill)
+ * 2. Quality score (data reliability & provenance score)
+ * 3. Deadline (countdown tag with urgency-based visual hierarchy)
+ * 4. Location/mode (remote, hybrid, onsite, geographic scope)
+ * 5. Skills (matched skills highlighted in emerald, required skills)
+ * 6. Eligibility (PASS / UNKNOWN / FAIL status badge with reason)
+ * 7. Source (provenance attribution)
+ * 8. Save/Interested/Apply actions (bookmark, heart, direct apply, lifecycle tracking)
+ * 9. Clear "Why this matches" section (expandable with instant 1-line summary)
+ */
+function renderOpportunityCard(opp, userOrProfile = {}, options = {}) {
+  if (!opp) return "";
+  const profile = userOrProfile?.profile || userOrProfile || {};
+  const interactions = {
+    saved: userOrProfile?.saved || [],
+    interested: userOrProfile?.interested || [],
+    passed: userOrProfile?.passed || [],
+    applied: userOrProfile?.applied || [],
+    lifecycleMap: options.lifecycleMap || userOrProfile?.lifecycleMap || {}
+  };
+
+  const oppId = String(opp.id || opp._id || "");
+  const isSaved = options.isSaved !== undefined ? options.isSaved : interactions.saved.map(String).includes(oppId);
+  const isInterested = options.isInterested !== undefined ? options.isInterested : interactions.interested.map(String).includes(oppId);
+  const isApplied = options.isApplied !== undefined ? options.isApplied : interactions.applied.map(String).includes(oppId);
+  const lifecycleEntry = interactions.lifecycleMap ? interactions.lifecycleMap[oppId] : null;
+
+  // 1. Match Score
+  const score = opp.matchScore !== undefined
+    ? opp.matchScore
+    : (opp.finalMatchScore !== undefined ? opp.finalMatchScore : getMatchScore(profile, opp.tags || []));
+  const scoreTier = score >= 80 ? "Exceptional" : score >= 65 ? "Strong" : score >= 45 ? "Good" : "Exploratory";
+  const scoreClass = score >= 75
+    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+    : score >= 50
+    ? "bg-primary/15 text-primary border-primary/30"
+    : "bg-foreground/5 text-foreground/70 border-foreground/15";
+
+  // 2. Quality Score
+  const quality = computeQualityScoreClient(opp);
+  const qualityTier = quality >= 85 ? "High Trust" : quality >= 60 ? "Verified" : "Unverified";
+  const qualityClass = quality >= 80
+    ? "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30"
+    : "bg-foreground/5 text-foreground/60 border-foreground/15";
+
+  // 3. Deadline
+  const dlInfo = typeof getDeadlineInfo === "function" ? getDeadlineInfo(opp.deadline) : {
+    timeRemaining: opp.deadline ? String(opp.deadline).slice(0, 10) : "Rolling",
+    urgencyLevel: "ROLLING",
+    badgeClass: "bg-muted text-muted-foreground",
+    summary: "Rolling deadline",
+    recommendedAction: "Apply when ready"
+  };
+
+  // 4. Location / Mode
+  const rawLoc = String(opp.location || "").toLowerCase();
+  const rawMode = String(opp.work_mode || "").toLowerCase();
+  const isRemote = rawMode === "remote" || rawLoc.includes("remote") || rawLoc.includes("virtual");
+  const isHybrid = rawMode === "hybrid" || rawLoc.includes("hybrid");
+  const workModeLabel = isRemote ? "Remote" : isHybrid ? "Hybrid" : "Onsite";
+  const workModeBadge = isRemote
+    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+    : isHybrid
+    ? "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30"
+    : "bg-foreground/5 text-foreground/75 border-foreground/15";
+  const locationText = opp.location || (isRemote ? "Worldwide / Anywhere" : "Unspecified");
+
+  // 5. Skills & Matched Skills
+  const userSkills = (Array.isArray(profile.skills) ? profile.skills : (profile.skills ? String(profile.skills).split(",") : []))
+    .map(s => String(s).toLowerCase().trim())
+    .filter(Boolean);
+  const oppTags = Array.isArray(opp.tags) ? opp.tags : [];
+  const reqSkills = Array.isArray(opp.eligibility?.required_skills) ? opp.eligibility.required_skills : [];
+  const allSkills = Array.from(new Set([...reqSkills, ...oppTags])).filter(Boolean);
+  
+  const matchedSkills = (opp.matchedSkills && opp.matchedSkills.length > 0)
+    ? opp.matchedSkills
+    : allSkills.filter(t => userSkills.some(s => s === t.toLowerCase() || s.includes(t.toLowerCase()) || t.toLowerCase().includes(s)));
+
+  const skillsHtml = allSkills.slice(0, 5).map(skill => {
+    const isMatched = matchedSkills.some(ms => ms.toLowerCase() === skill.toLowerCase());
+    return isMatched
+      ? `<span class="px-2 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 flex items-center gap-1"><span>✓</span> <span>${skill}</span></span>`
+      : `<span class="px-2 py-0.5 rounded-full font-mono text-[9px] uppercase border border-foreground/15 text-foreground/70">${skill}</span>`;
+  }).join("");
+
+  // 6. Eligibility
+  const eligStatus = opp.eligibility?.status || (opp.isEligible === false ? "FAIL" : (opp.isEligible === true ? "PASS" : "UNKNOWN"));
+  const eligLabel = eligStatus === "PASS" ? "Eligible" : eligStatus === "FAIL" ? "Ineligible" : "Check Criteria";
+  const eligBadgeClass = eligStatus === "PASS"
+    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+    : eligStatus === "FAIL"
+    ? "bg-destructive/15 text-destructive border-destructive/30"
+    : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30";
+  const eligIcon = eligStatus === "PASS" ? "shield-check" : eligStatus === "FAIL" ? "shield-alert" : "alert-circle";
+
+  // 7. Source
+  const sourceName = formatOpportunitySource(opp.source);
+
+  // 8. Why this matches
+  const whyData = getWhyThisMatches(opp, profile, interactions);
+  const whySectionHtml = renderWhyThisMatchesSection(whyData, { compact: false });
+
+  // Quick 1-line Why summary for instant glance
+  const oneLineWhy = matchedSkills.length > 0
+    ? `Matches your skills: <strong>${matchedSkills.slice(0, 3).join(", ")}</strong> · ${workModeLabel} · ${dlInfo.timeRemaining}`
+    : `${dlInfo.summary} · ${workModeLabel} · Open to your background`;
+
+  // 9. Tracker Entry (if provided via options or lifecycleMap)
+  const trackerEntry = options.trackerEntry || lifecycleEntry;
+  let trackerHtml = "";
+  if (trackerEntry && trackerEntry.stage) {
+    const sBadge = LIFECYCLE_META[trackerEntry.stage]?.badge || "bg-foreground/5 text-foreground/60 border-foreground/15";
+    const sIcon = LIFECYCLE_META[trackerEntry.stage]?.icon || "circle";
+    const stageIdx = LIFECYCLE_STAGES.indexOf(trackerEntry.stage);
+    const stageDots = LIFECYCLE_STAGES.filter(s => !["ACCEPTED","REJECTED"].includes(s)).map((s, i) => {
+      const done = stageIdx > i;
+      const cur = trackerEntry.stage === s;
+      return `<span class="inline-block size-2 rounded-full ${cur ? "bg-primary scale-125" : done ? "bg-primary/50" : "bg-foreground/15"}" title="${s}"></span>`;
+    }).join("");
+
+    const trackerMetaItems = [
+      trackerEntry.application_date ? `<span class="flex items-center gap-1"><i data-lucide="calendar" class="size-3"></i> Applied: ${new Date(trackerEntry.application_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</span>` : "",
+      trackerEntry.resume_version ? `<span class="flex items-center gap-1"><i data-lucide="file-text" class="size-3"></i> Resume: ${escapeHtml(trackerEntry.resume_version)}</span>` : "",
+      trackerEntry.follow_up_date ? `<span class="flex items-center gap-1 text-amber-600 dark:text-amber-400 font-bold"><i data-lucide="bell" class="size-3"></i> Follow-up: ${trackerEntry.follow_up_date}</span>` : "",
+    ].filter(Boolean).join("");
+
+    trackerHtml = `
+      <div class="mt-3.5 p-3.5 bg-foreground/[0.03] border-2 border-foreground/15 rounded-2xl">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-[9px] uppercase tracking-wider text-muted-foreground font-bold">Pipeline Stage:</span>
+            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase ${sBadge}">
+              <i data-lucide="${sIcon}" class="size-2.5"></i> ${trackerEntry.stage}
+            </span>
+            <div class="flex items-center gap-1 ml-1">${stageDots}</div>
+          </div>
+          ${trackerEntry.stage_updated_at ? `<span class="font-mono text-[9px] text-muted-foreground">Updated ${formatRelativeTime(trackerEntry.stage_updated_at)}</span>` : ''}
+        </div>
+        ${trackerMetaItems ? `<div class="flex flex-wrap gap-x-4 gap-y-1 mt-2.5 pt-2 border-t border-foreground/10 font-mono text-[10px] text-muted-foreground">${trackerMetaItems}</div>` : ''}
+        ${trackerEntry.notes ? `<div class="mt-2 text-xs font-mono text-muted-foreground italic border-l-2 border-primary/40 pl-2 line-clamp-2">${escapeHtml(trackerEntry.notes)}</div>` : ''}
+      </div>
+    `;
+  }
+
+  // Category Color
+  const catColors = {
+    internship: "bg-primary text-primary-foreground",
+    scholarship: "bg-secondary text-secondary-foreground",
+    competition: "bg-foreground text-background",
+    fellowship: "bg-indigo-600 text-white",
+    hackathon: "bg-lime text-foreground border border-foreground/10"
+  };
+  const categoryClass = catColors[opp.category] || "bg-foreground text-background";
+
+  const applyUrl = opp.apply_url || opp.source_url || `/opportunity/${opp.id}`;
+  const isExternalApply = Boolean(opp.apply_url || opp.source_url);
+
+  return `
+    <article
+      class="loop-opp-card animate-entry bg-card border-2 border-foreground rounded-[28px] shadow-stamp hover:shadow-stamp-lg hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden"
+      data-id="${opp.id}"
+      data-category="${opp.category || ''}"
+    >
+      <!-- Top Meta Banner: Category, Source, Verification & Scores -->
+      <div class="px-6 py-3 border-b-2 border-foreground/10 bg-foreground/[0.02] flex flex-wrap items-center justify-between gap-2.5">
+        <div class="flex items-center gap-2 flex-wrap">
+          <!-- Category Badge -->
+          <span class="px-2.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider rounded-md ${categoryClass}">
+            ${opp.category || 'Opportunity'}
+          </span>
+          <!-- Source Badge -->
+          <span class="px-2 py-0.5 rounded-md font-mono text-[9px] uppercase font-semibold bg-background border border-foreground/15 text-foreground/75 flex items-center gap-1" title="Opportunity Source">
+            <i data-lucide="database" class="size-2.5 text-primary"></i> ${sourceName}
+          </span>
+          <!-- Quality Score Badge -->
+          <span class="px-2 py-0.5 rounded-md font-mono text-[9px] font-bold uppercase border ${qualityClass} flex items-center gap-1" title="Data Reliability Score (Verified source, active links, freshness)">
+            <i data-lucide="shield" class="size-2.5"></i> ${quality}% Quality
+          </span>
+          <!-- Eligibility Badge -->
+          <span class="px-2 py-0.5 rounded-md font-mono text-[9px] font-bold uppercase border ${eligBadgeClass} flex items-center gap-1">
+            <i data-lucide="${eligIcon}" class="size-2.5"></i> ${eligLabel}
+          </span>
+          ${trackerEntry && trackerEntry.stage ? `
+            <span class="px-2 py-0.5 rounded-md font-mono text-[9px] font-bold uppercase border ${LIFECYCLE_META[trackerEntry.stage]?.badge || 'bg-foreground/5 text-foreground/60 border-foreground/15'} flex items-center gap-1">
+              <i data-lucide="${LIFECYCLE_META[trackerEntry.stage]?.icon || 'circle'}" class="size-2.5"></i> ${trackerEntry.stage}
+            </span>
+          ` : ''}
+          ${opp.featured ? `<span class="px-2 py-0.5 bg-lime text-foreground font-mono text-[9px] font-bold uppercase rounded-md border border-foreground/20">★ Featured</span>` : ''}
+          ${opp.verified ? `<span class="px-2 py-0.5 bg-blue-500 text-white font-mono text-[9px] font-bold uppercase rounded-md">✓ Verified</span>` : ''}
+        </div>
+
+        <!-- Deadline Tag -->
+        <div class="flex items-center gap-2">
+          <span class="px-2.5 py-0.5 rounded-full font-mono text-[10px] font-bold uppercase border ${dlInfo.badgeClass} flex items-center gap-1.5" title="${dlInfo.summary || ''}">
+            <i data-lucide="clock" class="size-3"></i> ${dlInfo.timeRemaining}
+          </span>
+        </div>
+      </div>
+
+      <!-- Main Body -->
+      <div class="p-6 md:p-7 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6">
+        <div class="min-w-0">
+          <!-- Title & Org -->
+          <div class="mb-2">
+            <a href="/opportunity/${opp.id}" class="group block">
+              <h3 class="font-display text-2xl md:text-3xl uppercase tracking-tight leading-[0.98] text-balance group-hover:text-primary transition-colors">
+                ${opp.title}
+              </h3>
+            </a>
+            <div class="flex items-center gap-2 mt-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground flex-wrap">
+              <span class="font-bold text-foreground/80">${opp.organization || 'Organization'}</span>
+              <span>·</span>
+              <span class="inline-flex items-center gap-1">
+                <i data-lucide="map-pin" class="size-3"></i> ${locationText}
+              </span>
+              <span>·</span>
+              <span class="px-1.5 py-0.2 rounded border font-bold text-[9px] ${workModeBadge}">${workModeLabel}</span>
+              ${opp.prize_amount ? `<span>·</span><span class="font-bold text-primary">${opp.prize_amount}</span>` : ''}
+            </div>
+          </div>
+
+          <!-- Description snippet -->
+          <p class="text-xs md:text-sm text-foreground/75 leading-relaxed line-clamp-2 mt-2.5 max-w-2xl">
+            ${opp.description || 'No description provided.'}
+          </p>
+
+          <!-- Skills Row -->
+          <div class="flex flex-wrap items-center gap-1.5 mt-4">
+            <span class="font-mono text-[9px] uppercase tracking-wider text-muted-foreground mr-1">Skills:</span>
+            ${skillsHtml || `<span class="font-mono text-[9px] text-muted-foreground uppercase">General</span>`}
+          </div>
+
+          <!-- Tracker Pipeline Info Box (if applicable) -->
+          ${trackerHtml}
+
+          <!-- At-a-glance Match Banner -->
+          <div class="mt-4 px-3 py-2 bg-primary/[0.06] border border-primary/20 rounded-xl flex items-center justify-between gap-3 text-[11px] font-mono">
+            <div class="flex items-center gap-2 text-foreground/85 leading-tight truncate">
+              <span class="size-4 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[9px] font-bold shrink-0">✦</span>
+              <span class="truncate">${oneLineWhy}</span>
+            </div>
+            <button
+              type="button"
+              class="card-why-toggle-btn shrink-0 text-primary hover:text-primary/80 font-bold uppercase text-[10px] flex items-center gap-1 transition-all"
+              data-id="${opp.id}"
+            >
+              <span>Why this matches</span>
+              <i data-lucide="chevron-down" class="size-3.5 why-arrow-icon transition-transform"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Right Side: Match Circle & Action Stack -->
+        <div class="flex md:flex-col justify-between items-start md:items-end md:w-48 gap-4 md:border-l-2 md:border-dashed md:border-foreground/15 md:pl-6 shrink-0">
+          <!-- Circular Match Score Display -->
+          <div class="flex items-center md:flex-col md:items-end gap-3 w-full">
+            <div class="relative inline-flex items-center justify-center size-16 md:size-20 shrink-0">
+              <svg class="size-full" viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="15.915" fill="none" stroke="rgba(0,0,0,0.08)" stroke-width="4"></circle>
+                <circle cx="18" cy="18" r="15.915" fill="none"
+                  stroke="${score >= 70 ? 'var(--primary)' : score >= 45 ? 'var(--lime)' : 'var(--muted-foreground)'}"
+                  stroke-width="4"
+                  stroke-dasharray="${score} ${100 - score}"
+                  stroke-dashoffset="25"
+                  transform="rotate(-90 18 18)"
+                ></circle>
+              </svg>
+              <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <div class="font-display text-xl md:text-2xl leading-none">${score}%</div>
+                <div class="font-mono text-[7px] uppercase tracking-widest text-muted-foreground mt-0.5">match</div>
+              </div>
+            </div>
+            <div class="text-left md:text-right min-w-0">
+              <div class="font-mono text-[10px] font-bold uppercase tracking-wider text-primary truncate">${scoreTier}</div>
+              <div class="font-mono text-[9px] text-muted-foreground uppercase truncate">${dlInfo.timeRemaining}</div>
+            </div>
+          </div>
+
+          <!-- Action Buttons Bar -->
+          <div class="flex flex-col gap-2 w-full mt-auto">
+            ${options.trackerEntry ? `
+              <button
+                type="button"
+                class="edit-card-btn py-2 px-3 border-2 border-foreground bg-card hover:bg-foreground hover:text-background rounded-xl font-mono text-[10px] font-bold uppercase transition-all flex items-center justify-center gap-1.5 w-full shadow-xs mb-1"
+                data-id="${opp.id}"
+              >
+                <i data-lucide="edit-3" class="size-3"></i>
+                <span>Edit Application</span>
+              </button>
+            ` : ''}
+
+            <div class="grid grid-cols-2 gap-1.5 w-full">
+              <!-- Save Toggle -->
+              <button
+                type="button"
+                class="card-save-btn py-2 px-2.5 rounded-xl border-2 border-foreground font-mono text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all ${isSaved ? 'bg-secondary text-secondary-foreground shadow-sm' : 'bg-card hover:bg-muted'}"
+                data-id="${opp.id}"
+                title="${isSaved ? 'Saved to watchlist' : 'Save to watchlist'}"
+              >
+                <i data-lucide="${isSaved ? 'bookmark-check' : 'bookmark'}" class="size-3.5"></i>
+                <span>${isSaved ? 'Saved' : 'Save'}</span>
+              </button>
+
+              <!-- Interested Toggle -->
+              <button
+                type="button"
+                class="card-interested-btn py-2 px-2.5 rounded-xl border-2 border-foreground font-mono text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all ${isInterested ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-card hover:bg-muted text-foreground'}"
+                data-id="${opp.id}"
+                title="${isInterested ? 'Marked interested' : 'Express interest'}"
+              >
+                <i data-lucide="heart" class="size-3.5 ${isInterested ? 'fill-current' : ''}"></i>
+                <span>${isInterested ? 'Interested' : 'Interest'}</span>
+              </button>
+            </div>
+
+            <!-- Apply & Details Row -->
+            <div class="flex gap-1.5 w-full">
+              <a
+                href="${applyUrl}"
+                ${isExternalApply ? 'target="_blank" rel="noopener noreferrer"' : ''}
+                class="card-apply-btn flex-1 text-center py-2.5 px-3 bg-foreground text-background font-mono text-[10px] font-bold uppercase rounded-xl hover:bg-primary hover:text-primary-foreground transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                data-id="${opp.id}"
+              >
+                <span>${isExternalApply ? 'Apply' : 'View'}</span>
+                <i data-lucide="${isExternalApply ? 'external-link' : 'arrow-right'}" class="size-3"></i>
+              </a>
+
+              <a
+                href="/opportunity/${opp.id}"
+                class="py-2.5 px-3 border-2 border-foreground/30 hover:border-foreground rounded-xl font-mono text-[10px] font-bold uppercase transition-all flex items-center justify-center text-foreground hover:bg-foreground/5"
+                title="View full opportunity dossier"
+              >
+                <i data-lucide="file-text" class="size-3.5"></i>
+              </a>
+            </div>
+
+            ${lifecycleEntry && !options.trackerEntry ? `
+              <div class="w-full text-center mt-1">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase border bg-foreground/5 border-foreground/15 text-muted-foreground">
+                  <span class="size-1.5 rounded-full bg-primary"></span> Stage: ${lifecycleEntry.stage}
+                </span>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- Expandable "Why this matches" Drawer -->
+      <div id="why-drawer-${opp.id}" class="card-why-drawer hidden border-t-2 border-foreground/10 px-6 py-5 bg-muted/20 animate-entry">
+        ${whySectionHtml}
+      </div>
+    </article>
+  `;
+}
+
+/**
+ * Universal Card Event Listener Attacher
+ * Supports save toggle, interested toggle, apply action tracking, why-drawer expand
+ */
+function attachOpportunityCardListeners(containerEl, handlers = {}) {
+  const container = typeof containerEl === "string" ? document.querySelector(containerEl) : containerEl;
+  if (!container) return;
+
+  container.addEventListener("click", async (e) => {
+    // 1. Why this matches drawer toggle
+    const whyToggle = e.target.closest(".card-why-toggle-btn");
+    if (whyToggle) {
+      e.preventDefault();
+      const oppId = whyToggle.dataset.id;
+      const drawer = container.querySelector(`#why-drawer-${oppId}`);
+      const arrow = whyToggle.querySelector(".why-arrow-icon");
+      if (drawer) {
+        drawer.classList.toggle("hidden");
+        if (arrow) arrow.classList.toggle("rotate-180");
+        if (window.lucide) window.lucide.createIcons();
+      }
+      return;
+    }
+
+    // 2. Save toggle button
+    const saveBtn = e.target.closest(".card-save-btn");
+    if (saveBtn) {
+      e.preventDefault();
+      const oppId = saveBtn.dataset.id;
+      if (handlers.onSave) {
+        handlers.onSave(oppId, saveBtn);
+      } else {
+        try {
+          const res = await fetch("/api/user/saved/toggle", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: oppId })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.saved) {
+              saveBtn.className = "card-save-btn py-2 px-2.5 rounded-xl border-2 border-foreground font-mono text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all bg-secondary text-secondary-foreground shadow-sm";
+              saveBtn.innerHTML = `<i data-lucide="bookmark-check" class="size-3.5"></i><span>Saved</span>`;
+            } else {
+              saveBtn.className = "card-save-btn py-2 px-2.5 rounded-xl border-2 border-foreground font-mono text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all bg-card hover:bg-muted";
+              saveBtn.innerHTML = `<i data-lucide="bookmark" class="size-3.5"></i><span>Save</span>`;
+            }
+            if (window.lucide) window.lucide.createIcons();
+            if (handlers.onAfterSave) handlers.onAfterSave(oppId, data.saved);
+          }
+        } catch (err) {
+          console.error("Save error:", err);
+        }
+      }
+      return;
+    }
+
+    // 3. Interested toggle button
+    const interestedBtn = e.target.closest(".card-interested-btn");
+    if (interestedBtn) {
+      e.preventDefault();
+      const oppId = interestedBtn.dataset.id;
+      if (handlers.onInterested) {
+        handlers.onInterested(oppId, interestedBtn);
+      } else {
+        try {
+          const res = await fetch("/api/user/interested/toggle", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: oppId })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.interested) {
+              interestedBtn.className = "card-interested-btn py-2 px-2.5 rounded-xl border-2 border-foreground font-mono text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all bg-primary text-primary-foreground shadow-sm";
+              interestedBtn.innerHTML = `<i data-lucide="heart" class="size-3.5 fill-current"></i><span>Interested</span>`;
+            } else {
+              interestedBtn.className = "card-interested-btn py-2 px-2.5 rounded-xl border-2 border-foreground font-mono text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all bg-card hover:bg-muted text-foreground";
+              interestedBtn.innerHTML = `<i data-lucide="heart" class="size-3.5"></i><span>Interest</span>`;
+            }
+            if (window.lucide) window.lucide.createIcons();
+            if (handlers.onAfterInterested) handlers.onAfterInterested(oppId, data.interested);
+          }
+        } catch (err) {
+          console.error("Interested error:", err);
+        }
+      }
+      return;
+    }
+
+    // 4. Apply action tracking
+    const applyBtn = e.target.closest(".card-apply-btn");
+    if (applyBtn) {
+      const oppId = applyBtn.dataset.id;
+      // Track behavior and notify handlers
+      fetch("/api/user/lifecycle/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opportunityId: oppId, stage: "APPLIED" })
+      }).catch(() => {});
+      if (handlers.onApply) handlers.onApply(oppId);
+    }
+  });
+}
+
+// Render dynamic header based on authentication status & active navigation
 function renderHeader(user) {
   const headerNav = document.getElementById("header-nav");
   if (!headerNav) return;
 
   if (user) {
+    const curPath = window.location.pathname;
+    const curSearch = window.location.search;
+    const isDiscover = curPath === "/" && curSearch.includes("tab=discover");
+    const isFeed = curPath === "/" && !isDiscover;
+    const isSaved = curPath.startsWith("/saved") && !curSearch.includes("tab=interested");
+    const isInterested = curPath.startsWith("/saved") && curSearch.includes("tab=interested");
+    const isTracker = curPath.startsWith("/tracker");
+    const isCalendar = curPath.startsWith("/calendar");
+    const isProfile = curPath.startsWith("/profile");
+
+    const linkCls = (active) => `font-mono text-[11px] font-bold uppercase tracking-tight transition-all px-2.5 py-1 rounded-lg ${
+      active
+        ? 'bg-foreground text-background shadow-xs'
+        : 'text-foreground/70 hover:text-foreground hover:bg-foreground/5'
+    }`;
+
     headerNav.innerHTML = `
-      <div class="flex items-center gap-5">
-        <a href="/" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Feed</a>
-        <a href="/calendar" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Calendar</a>
-        <a href="/saved" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Saved</a>
-        <a href="/tracker" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Tracker</a>
-        <a href="/profile" class="font-mono text-[11px] font-bold uppercase tracking-tight text-foreground/70 hover:text-foreground transition-all">Profile</a>
+      <div class="flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar py-1">
+        <a href="/" class="${linkCls(isFeed)}">Feed</a>
+        <a href="/?tab=discover" class="${linkCls(isDiscover)}">Discover</a>
+        <a href="/saved" class="${linkCls(isSaved)}">Saved</a>
+        <a href="/saved?tab=interested" class="${linkCls(isInterested)}">Interested</a>
+        <a href="/tracker" class="${linkCls(isTracker)}">Applications</a>
+        <a href="/calendar" class="${linkCls(isCalendar)}">Calendar</a>
+        <a href="/profile" class="${linkCls(isProfile)}">Profile</a>
         ${(user?.isAdmin || user?.role === 'admin') ? `
-          <a href="/admin" class="font-mono text-[11px] font-bold uppercase tracking-tight text-primary hover:text-primary/80 transition-all flex items-center gap-1">🛡️ Admin</a>
+          <a href="/admin" class="font-mono text-[11px] font-bold uppercase tracking-tight text-primary hover:text-primary/80 transition-all flex items-center gap-1 px-2 py-1">🛡️ Admin</a>
         ` : ''}
-        <button id="notif-bell-btn" class="relative p-2 rounded-full border border-foreground/30 hover:border-foreground hover:bg-foreground/5 transition-all text-foreground flex items-center justify-center" title="Notifications" aria-label="Notifications">
+        <button id="notif-bell-btn" class="relative p-2 rounded-full border border-foreground/30 hover:border-foreground hover:bg-foreground/5 transition-all text-foreground flex items-center justify-center shrink-0 ml-1" title="Notifications" aria-label="Notifications">
           <i data-lucide="bell" class="size-3.5"></i>
           <span id="notif-badge" class="hidden absolute -top-1 -right-1 size-4 bg-primary text-primary-foreground font-mono text-[9px] font-bold rounded-full flex items-center justify-center">0</span>
         </button>
-        <button id="logout-btn" class="px-4 py-2 border-2 border-foreground rounded-full font-mono text-[11px] font-bold uppercase tracking-tight hover:bg-foreground hover:text-background transition-all">Log Out</button>
+        <button id="logout-btn" class="ml-1 px-3.5 py-1.5 border-2 border-foreground rounded-full font-mono text-[11px] font-bold uppercase tracking-tight hover:bg-foreground hover:text-background transition-all shrink-0">Log Out</button>
       </div>
     `;
     document.getElementById("logout-btn")?.addEventListener("click", async () => {
@@ -1446,7 +2004,7 @@ async function saveNotificationPreferences(prefs) {
 /**
  * Opens the interactive Notification Center Modal with tabs for Notifications and Preferences.
  */
-async function openNotificationModal() {
+async function openNotificationModal(initialTab = "notifications") {
   let modal = document.getElementById("notification-modal");
   if (!modal) {
     modal = document.createElement("div");
@@ -1457,7 +2015,7 @@ async function openNotificationModal() {
     modal.classList.remove("hidden");
   }
 
-  let currentTab = "notifications"; // "notifications" | "preferences"
+  let currentTab = initialTab || "notifications"; // "notifications" | "preferences"
   let filterUnreadOnly = false;
 
   async function renderModalContent() {
