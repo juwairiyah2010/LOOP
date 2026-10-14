@@ -198,10 +198,25 @@ export class NotificationEngine {
     const oppsColl = await getOpportunitiesCollection();
     const usersColl = await getUsersCollection();
 
-    // Load active opportunities
-    const rawOpps = await oppsColl.find({ active: { $ne: false } }).toArray();
+    // Load active opportunities with selective projection
+    const rawOpps = await oppsColl.find(
+      { active: { $ne: false } },
+      {
+        projection: {
+          id: 1, _id: 1, title: 1, organization: 1, category: 1, deadline: 1,
+          tags: 1, eligibility: 1, work_mode: 1, location: 1, quality_score: 1,
+          active: 1, is_active: 1, source: 1, source_id: 1
+        }
+      }
+    ).toArray();
     const opps = rawOpps.map(formatOpportunity);
     const oppsMap = new Map(opps.map(o => [String(o.id), o]));
+
+    // Batch pre-fetch all existing dedupKeys for this user in a single projected query (Eliminates N+1 findOne queries)
+    const existingNotifs = await notifsColl
+      .find({ userId: userIdStr }, { projection: { dedupKey: 1, _id: 0 } })
+      .toArray();
+    const existingDedupKeys = new Set(existingNotifs.map(n => n.dedupKey).filter(Boolean));
 
     const newNotifications = [];
     const updatedSnapshots = { ...(user.deadlineSnapshots || {}) };
@@ -214,8 +229,8 @@ export class NotificationEngine {
     const interestedIds = new Set((user.interested || []).map(String));
     const lifecycle = user.lifecycle || {};
 
-    // Helper to evaluate and stage a notification if not duplicated
-    const stageNotification = async (notifData) => {
+    // Helper to evaluate and stage a notification if not duplicated (pure in-memory O(1) deduplication)
+    const stageNotification = (notifData) => {
       // 1. Check preferences toggle
       if (notifData.type === NOTIFICATION_TYPES.HIGH_MATCH && !prefs.highMatch) return;
       if (notifData.type === NOTIFICATION_TYPES.SAVED_DEADLINE && !prefs.savedDeadlines) return;
@@ -232,16 +247,12 @@ export class NotificationEngine {
         return;
       }
 
-      // 3. Deduplication Check
-      const existing = await notifsColl.findOne({
-        userId: userIdStr,
-        dedupKey: notifData.dedupKey
-      });
-
-      if (existing) {
-        // Already notified with this milestone/dedup key
+      // 3. Deduplication Check via in-memory Set
+      if (existingDedupKeys.has(notifData.dedupKey)) {
         return;
       }
+
+      existingDedupKeys.add(notifData.dedupKey);
 
       const notifDoc = {
         id: `notif_${Math.random().toString(36).substring(2, 12)}_${Date.now()}`,
@@ -260,7 +271,6 @@ export class NotificationEngine {
         metadata: notifData.metadata || {}
       };
 
-      await notifsColl.insertOne(notifDoc);
       newNotifications.push(notifDoc);
     };
 
@@ -446,6 +456,11 @@ export class NotificationEngine {
         dedupKey: `weekly_digest:${userIdStr}:${weekKey}`,
         metadata: { weekKey }
       });
+    }
+
+    // Batch insert all staged notifications in a single roundtrip (Eliminates N+1 insertOne queries)
+    if (newNotifications.length > 0) {
+      await notifsColl.insertMany(newNotifications);
     }
 
     // Persist updated deadline snapshots to user document

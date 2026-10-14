@@ -40,13 +40,14 @@ const uri = sanitizeMongoUri(rawUri);
 const dbName = process.env.DATABASE_NAME || process.env.DATABASE || "leap_lounge";
 
 // Serverless-optimized MongoDB connection options
+const isLocalUri = rawUri.includes("localhost") || rawUri.includes("127.0.0.1");
 const options = {
   maxPoolSize: 5,           // cap connections on serverless
   minPoolSize: 1,           // keep 1 alive to avoid reconnect on warm calls
   maxIdleTimeMS: 45000,     // keep idle connections 45s (Vercel max lifetime ~60s)
-  serverSelectionTimeoutMS: 10000,
+  serverSelectionTimeoutMS: isLocalUri ? 2000 : 8000,
   socketTimeoutMS: 20000,
-  connectTimeoutMS: 10000,
+  connectTimeoutMS: isLocalUri ? 2000 : 8000,
   retryWrites: true,
   retryReads: true,
   compressors: ["zlib"],    // compress wire traffic
@@ -286,8 +287,12 @@ export class MockCollection {
         totalEvents: 0, lastUpdated: null
       };
     }
-    const current = this.data;
+    let current = this.data;
     current.push(newDoc);
+    // Cap mock collections to avoid unbounded disk and memory growth
+    if (["notifications", "source_health_logs"].includes(this.name) && current.length > 500) {
+      current = current.slice(-500);
+    }
     this.data = current;
     return { insertedId: newDoc._id, acknowledged: true };
   }
@@ -298,8 +303,12 @@ export class MockCollection {
       if (!newDoc._id) newDoc._id = generateId();
       return newDoc;
     });
-    const current = this.data;
+    let current = this.data;
     current.push(...inserted);
+    // Cap mock collections to avoid unbounded disk and memory growth
+    if (["notifications", "source_health_logs"].includes(this.name) && current.length > 500) {
+      current = current.slice(-500);
+    }
     this.data = current;
     return { insertedCount: inserted.length, acknowledged: true };
   }
@@ -599,12 +608,43 @@ async function setupIndexes(db) {
       { title: "text", organization: "text", tags: "text" },
       { name: "search_text_idx" }
     );
+    // Core Opportunity query indexes
+    await opps.createIndex({ id: 1 });
+    await opps.createIndex({ source: 1, source_id: 1 });
+    await opps.createIndex({ content_hash: 1 }, { sparse: true });
+    await opps.createIndex({ active: 1, deadline: 1 });
+    await opps.createIndex({ active: 1, category: 1, deadline: 1 });
+    await opps.createIndex({ active: 1, quality_score: -1 });
     await opps.createIndex({ category: 1, deadline: 1 });
     await opps.createIndex({ deadline: 1 });
     await opps.createIndex({ location: 1 });
     await opps.createIndex({ application_start_date: 1 });
     await opps.createIndex({ tags: 1 });
     await opps.createIndex({ active: 1 });
+
+    // Users Collection indexes
+    const users = db.collection("users");
+    await users.createIndex({ name: 1 }, { unique: true });
+    await users.createIndex({ email: 1 }, { sparse: true });
+    await users.createIndex({ role: 1 });
+
+    // Notifications Collection indexes + TTL index for data lifecycle
+    const notifs = db.collection("notifications");
+    await notifs.createIndex({ userId: 1, createdAt: -1 });
+    await notifs.createIndex({ userId: 1, dedupKey: 1 });
+    await notifs.createIndex({ userId: 1, read: 1 });
+    // Expire notifications older than 90 days to prevent unbounded collection growth
+    await notifs.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 });
+
+    // Sources Collection indexes
+    const sources = db.collection("sources");
+    await sources.createIndex({ id: 1 }, { unique: true });
+
+    // Source Health Logs indexes + TTL index
+    const healthLogs = db.collection("source_health_logs");
+    await healthLogs.createIndex({ source: 1, timestamp: -1 });
+    // Expire health logs older than 90 days
+    await healthLogs.createIndex({ timestamp: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 });
     // Seed opportunities if empty
     const oppCount = await opps.countDocuments();
     if (oppCount === 0) {
