@@ -77,6 +77,9 @@
         </div>
       </div>
 
+      <!-- Filter Tabs: All Tracked, Saved, Interested, Applications -->
+      <div id="calendar-filter-tabs" class="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar"></div>
+
       <!-- Calendar Body Grid -->
       <div class="p-4 bg-card border-2 border-foreground rounded-3xl shadow-stamp">
         
@@ -97,8 +100,11 @@
     <!-- Right Column: Sidebar Deadlines Checklist -->
     <div class="col-span-12 lg:col-span-4 flex flex-col gap-6">
       <div class="p-6 bg-foreground text-background rounded-3xl shadow-stamp-lg">
-        <h2 class="font-mono text-[10px] uppercase tracking-widest opacity-60 mb-4">Upcoming Closures</h2>
-        <ul id="upcoming-checklist" class="space-y-4">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-mono text-[10px] uppercase tracking-widest opacity-60">Upcoming Closures</h2>
+          <span class="font-mono text-[9px] uppercase px-2 py-0.5 rounded bg-background/10 font-bold">Tracked</span>
+        </div>
+        <ul id="upcoming-checklist" class="space-y-3">
           <!-- Dynamically populated -->
           <li class="font-mono text-[10px] uppercase tracking-wider opacity-50">No items closing soon.</li>
         </ul>
@@ -109,12 +115,15 @@
 
   <!-- Popup Modal for Day Selection -->
   <div id="day-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-foreground/20 backdrop-blur-sm px-4">
-    <div class="w-full max-w-md bg-background border-2 border-foreground rounded-3xl p-6 shadow-stamp-lg animate-entry">
-      <div class="flex items-center justify-between border-b border-foreground/10 pb-3 mb-4">
-        <h3 id="modal-date-title" class="font-display text-2xl uppercase">15 July 2026</h3>
-        <button id="close-modal-btn" class="size-8 border-2 border-foreground rounded-full flex items-center justify-center hover:bg-foreground/5 transition-all">&times;</button>
+    <div class="w-full max-w-xl bg-background border-2 border-foreground rounded-3xl p-6 shadow-stamp-lg animate-entry max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between border-b border-foreground/10 pb-3 mb-4 shrink-0">
+        <div>
+          <div class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">Deadlines On</div>
+          <h3 id="modal-date-title" class="font-display text-2xl uppercase mt-0.5">15 July 2026</h3>
+        </div>
+        <button id="close-modal-btn" class="size-8 border-2 border-foreground rounded-full flex items-center justify-center hover:bg-foreground/5 transition-all font-bold">&times;</button>
       </div>
-      <div id="modal-list" class="space-y-4">
+      <div id="modal-list" class="space-y-4 overflow-y-auto pr-1">
         <!-- Rendered list of items closing on that day -->
       </div>
     </div>
@@ -143,44 +152,146 @@
       renderHeader(user);
       initMarqueeTicker();
 
-      let savedOpps = [];
+      let currentUserProfile = null;
+      let lifecycleMap = {};
+      let allTrackedOpps = [];
+      let activeFilter = "ALL"; // "ALL" | "SAVED" | "INTERESTED" | "APPLIED"
       let currentDate = new Date(); // Active viewed month/year pointer
 
-      // Fetch saved opportunities
+      // Fetch saved, interested, applied and lifecycle opportunities
       try {
-        const profileRes = await fetch("/api/user/profile");
-        if (profileRes.ok) {
-          const profileData = await profileRes.json();
-          
-          if (profileData.saved && profileData.saved.length > 0) {
-            const oppsRes = await fetch("/api/opportunities/by-ids", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ids: profileData.saved })
-            });
-            if (oppsRes.ok) {
-              savedOpps = await oppsRes.json();
-            }
+        const [profRes, lifeRes] = await Promise.all([
+          fetch("/api/user/profile").catch(() => null),
+          fetch("/api/user/lifecycle").catch(() => null)
+        ]);
+
+        if (profRes && profRes.ok) {
+          currentUserProfile = await profRes.json();
+        }
+        if (lifeRes && lifeRes.ok) {
+          const lData = await lifeRes.json();
+          lifecycleMap = lData.lifecycle || {};
+        }
+
+        const savedIds = currentUserProfile?.saved || [];
+        const interestedIds = currentUserProfile?.interested || [];
+        const appliedIds = currentUserProfile?.applied || [];
+        const lifecycleIds = Object.keys(lifecycleMap);
+
+        const allIds = Array.from(new Set([...savedIds, ...interestedIds, ...appliedIds, ...lifecycleIds]));
+
+        if (allIds.length > 0) {
+          const oppsRes = await fetch("/api/opportunities/by-ids", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: allIds })
+          });
+          if (oppsRes.ok) {
+            allTrackedOpps = await oppsRes.json();
           }
         }
       } catch (err) {
-        console.error("Failed to load saved items:", err);
+        console.error("Failed to load tracked items:", err);
+      }
+
+      function getFilteredOpps() {
+        if (!currentUserProfile) return allTrackedOpps;
+        const savedIds = (currentUserProfile.saved || []).map(String);
+        const interestedIds = (currentUserProfile.interested || []).map(String);
+        const appliedIds = (currentUserProfile.applied || []).map(String);
+
+        if (activeFilter === "SAVED") {
+          return allTrackedOpps.filter(o => savedIds.includes(String(o.id || o._id)));
+        }
+        if (activeFilter === "INTERESTED") {
+          return allTrackedOpps.filter(o => interestedIds.includes(String(o.id || o._id)));
+        }
+        if (activeFilter === "APPLIED") {
+          return allTrackedOpps.filter(o => appliedIds.includes(String(o.id || o._id)) || lifecycleMap[String(o.id || o._id)]);
+        }
+        return allTrackedOpps;
+      }
+
+      function renderFilterTabs() {
+        const savedCount = (currentUserProfile?.saved || []).length;
+        const interestedCount = (currentUserProfile?.interested || []).length;
+        const appliedCount = (currentUserProfile?.applied || []).length;
+        const totalCount = allTrackedOpps.length;
+
+        const tabs = [
+          { key: "ALL", label: `All Tracked (${totalCount})` },
+          { key: "SAVED", label: `Saved (${savedCount})` },
+          { key: "INTERESTED", label: `Interested (${interestedCount})` },
+          { key: "APPLIED", label: `Applications (${appliedCount})` }
+        ];
+
+        const tabsContainer = document.getElementById("calendar-filter-tabs");
+        if (!tabsContainer) return;
+
+        tabsContainer.innerHTML = tabs.map(t => `
+          <button
+            class="cal-tab px-3.5 py-1.5 rounded-xl font-mono text-[10px] font-bold uppercase border-2 transition-all shrink-0 ${
+              activeFilter === t.key
+                ? 'bg-foreground text-background border-foreground shadow-xs'
+                : 'border-foreground/15 text-foreground/70 hover:border-foreground/40 hover:text-foreground'
+            }"
+            data-key="${t.key}"
+          >
+            ${t.label}
+          </button>
+        `).join("");
+
+        tabsContainer.querySelectorAll(".cal-tab").forEach(btn => {
+          btn.addEventListener("click", () => {
+            activeFilter = btn.dataset.key;
+            renderFilterTabs();
+            renderCalendar();
+            renderSidebarChecklist();
+          });
+        });
       }
 
       // Populate sidebar checklists
-      const checklistContainer = document.getElementById("upcoming-checklist");
-      const sortedOpps = [...savedOpps].sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
-      
-      if (sortedOpps.length > 0) {
-        checklistContainer.innerHTML = sortedOpps.slice(0, 6).map(o => {
-          const daysLeft = formatDeadline(o.deadline);
+      function renderSidebarChecklist() {
+        const checklistContainer = document.getElementById("upcoming-checklist");
+        const opps = getFilteredOpps();
+        const sortedOpps = opps
+          .filter(o => o.deadline)
+          .sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+        
+        if (sortedOpps.length === 0) {
+          checklistContainer.innerHTML = `<li class="font-mono text-[10px] uppercase tracking-wider opacity-50 py-4 text-center">No tracked opportunities closing soon.</li>`;
+          return;
+        }
+
+        checklistContainer.innerHTML = sortedOpps.slice(0, 7).map(o => {
+          const dlInfo = typeof getDeadlineInfo === "function" ? getDeadlineInfo(o.deadline) : { timeRemaining: "Rolling" };
+          const quality = computeQualityScoreClient(o);
+          const source = formatOpportunitySource(o.source);
+          const score = getMatchScore(currentUserProfile?.profile || {}, o.tags || []);
           return `
-            <li class="border-l-2 border-primary pl-3">
-              <div class="font-mono text-[9px] uppercase opacity-60">${daysLeft}</div>
-              <div class="text-xs font-semibold leading-tight mt-0.5 truncate">${o.title}</div>
+            <li class="p-3.5 bg-background text-foreground rounded-2xl border-2 border-foreground/10 hover:border-primary transition-all">
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <span class="px-2 py-0.5 rounded-full font-mono text-[8px] font-bold uppercase bg-primary text-primary-foreground">
+                  ${o.category || 'OPPORTUNITY'}
+                </span>
+                <span class="font-mono text-[9px] font-bold uppercase text-primary flex items-center gap-1">
+                  <i data-lucide="clock" class="size-2.5"></i> ${dlInfo.timeRemaining}
+                </span>
+              </div>
+              <a href="/opportunity/${o.id}" class="text-xs font-bold leading-tight line-clamp-1 hover:text-primary transition-colors block">
+                ${o.title}
+              </a>
+              <div class="font-mono text-[9px] text-muted-foreground uppercase truncate mt-0.5">${o.organization || 'Organization'}</div>
+              <div class="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-foreground/10 font-mono text-[9px]">
+                <span class="text-foreground/75 font-semibold">✦ ${score}% Match · ${source}</span>
+                <a href="/opportunity/${o.id}" class="text-primary font-bold hover:underline">View ›</a>
+              </div>
             </li>
           `;
         }).join("");
+
+        if (window.lucide) window.lucide.createIcons();
       }
 
       const monthNames = [
@@ -216,13 +327,16 @@
           calendarDays.innerHTML += `<div class="p-2 border border-foreground/5 bg-background/30 rounded-xl opacity-30"></div>`;
         }
 
+        const activeOpps = getFilteredOpps();
+
         // Render days cells
         for (let day = 1; day <= totalDays; day++) {
           const cellDate = new Date(year, month, day);
           const cellDateString = cellDate.toISOString().split("T")[0];
 
           // Filter opportunities closing on this date
-          const closingOpps = savedOpps.filter(opp => {
+          const closingOpps = activeOpps.filter(opp => {
+            if (!opp.deadline) return false;
             const oppDateString = new Date(opp.deadline).toISOString().split("T")[0];
             return oppDateString === cellDateString;
           });
@@ -231,11 +345,12 @@
           let indicatorHtml = "";
           if (closingOpps.length > 0) {
             indicatorHtml = `
-              <div class="flex flex-wrap gap-1 mt-1.5 max-h-[24px] overflow-hidden">
-                ${closingOpps.map(opp => {
+              <div class="flex flex-wrap gap-1 mt-1.5 max-h-[28px] overflow-hidden">
+                ${closingOpps.slice(0, 4).map(opp => {
                   const color = categoryColors[opp.category] || "bg-foreground";
                   return `<span class="size-2 rounded-full ${color}" title="${opp.title}"></span>`;
                 }).join("")}
+                ${closingOpps.length > 4 ? `<span class="font-mono text-[7px] text-muted-foreground font-bold">+${closingOpps.length - 4}</span>` : ''}
               </div>
             `;
           }
@@ -245,11 +360,14 @@
 
           calendarDays.innerHTML += `
             <div 
-              class="day-cell p-2 bg-background min-h-[75px] rounded-xl flex flex-col justify-between cursor-pointer transition-all ${todayClasses}"
+              class="day-cell p-2 bg-background min-h-[78px] rounded-xl flex flex-col justify-between cursor-pointer transition-all ${todayClasses} ${closingOpps.length > 0 ? 'hover:shadow-stamp hover:-translate-x-0.5 hover:-translate-y-0.5' : ''}"
               data-date="${cellDateString}"
               data-day="${day}"
             >
-              <div class="font-mono text-xs font-bold leading-none ${isToday ? 'text-primary' : ''}">${day}</div>
+              <div class="flex items-center justify-between">
+                <span class="font-mono text-xs font-bold leading-none ${isToday ? 'text-primary' : ''}">${day}</span>
+                ${closingOpps.length > 0 ? `<span class="size-1.5 rounded-full bg-primary animate-pulse"></span>` : ''}
+              </div>
               ${indicatorHtml}
             </div>
           `;
@@ -279,10 +397,11 @@
         if (!cell) return;
 
         const dateStr = cell.getAttribute("data-date");
-        const day = cell.getAttribute("data-day");
+        const activeOpps = getFilteredOpps();
         
         // Filter items closing on clicked date
-        const closing = savedOpps.filter(opp => {
+        const closing = activeOpps.filter(opp => {
+          if (!opp.deadline) return false;
           const oppDateString = new Date(opp.deadline).toISOString().split("T")[0];
           return oppDateString === dateStr;
         });
@@ -290,26 +409,78 @@
         if (closing.length === 0) return;
 
         const formattedDate = new Date(dateStr).toLocaleDateString("en-US", {
+          weekday: "long",
           day: "numeric",
           month: "long",
           year: "numeric"
         });
 
         modalTitle.innerText = formattedDate;
-        modalList.innerHTML = closing.map(opp => `
-          <div class="p-4 bg-muted border border-foreground/10 rounded-2xl flex flex-col gap-2">
-            <div>
-              <span class="px-2 py-0.5 rounded-full font-mono text-[8px] font-bold uppercase ${categoryColors[opp.category] || 'bg-foreground text-background'}">
-                ${opp.category}
-              </span>
-              <h4 class="font-display text-xl uppercase tracking-tight leading-none mt-1.5">${opp.title}</h4>
-              <div class="font-mono text-[9px] uppercase text-muted-foreground mt-0.5">${opp.organization}</div>
+        modalList.innerHTML = closing.map(opp => {
+          const score = opp.matchScore !== undefined
+            ? opp.matchScore
+            : getMatchScore(currentUserProfile?.profile || {}, opp.tags || []);
+          const quality = computeQualityScoreClient(opp);
+          const source = formatOpportunitySource(opp.source);
+          const rawLoc = String(opp.location || "").toLowerCase();
+          const rawMode = String(opp.work_mode || "").toLowerCase();
+          const isRemote = rawMode === "remote" || rawLoc.includes("remote");
+          const modeLabel = isRemote ? "Remote" : (opp.work_mode || "Onsite");
+          const applyUrl = opp.apply_url || opp.source_url || `/opportunity/${opp.id}`;
+          const isExternal = Boolean(opp.apply_url || opp.source_url);
+
+          return `
+            <div class="p-4 bg-card border-2 border-foreground rounded-2xl flex flex-col gap-3 shadow-xs">
+              <div class="flex items-center justify-between gap-2 flex-wrap">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span class="px-2 py-0.5 rounded-full font-mono text-[8px] font-bold uppercase ${categoryColors[opp.category] || 'bg-foreground text-background'}">
+                    ${opp.category || 'Opportunity'}
+                  </span>
+                  <span class="px-2 py-0.5 rounded-md font-mono text-[8px] font-semibold bg-muted border border-foreground/15 text-foreground/75">
+                    ${source}
+                  </span>
+                  <span class="px-2 py-0.5 rounded-md font-mono text-[8px] font-bold border border-blue-500/30 text-blue-700 dark:text-blue-300">
+                    🛡️ ${quality}% Quality
+                  </span>
+                </div>
+                <span class="font-mono text-[10px] font-bold text-primary px-2 py-0.5 rounded-full bg-primary/10 border border-primary/25">
+                  ✦ ${score}% Match
+                </span>
+              </div>
+
+              <div>
+                <h4 class="font-display text-xl uppercase tracking-tight leading-tight">${opp.title}</h4>
+                <div class="font-mono text-[10px] uppercase text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+                  <span class="font-bold text-foreground/80">${opp.organization || 'Organization'}</span>
+                  <span>·</span>
+                  <span>${opp.location || modeLabel}</span>
+                  <span>·</span>
+                  <span class="font-bold text-primary">${modeLabel}</span>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2 pt-2 border-t border-foreground/10">
+                <a
+                  href="${applyUrl}"
+                  ${isExternal ? 'target="_blank" rel="noopener noreferrer"' : ''}
+                  class="flex-1 py-2 text-center bg-foreground text-background rounded-xl font-mono text-[10px] font-bold uppercase hover:bg-primary transition-all flex items-center justify-center gap-1"
+                >
+                  <span>${isExternal ? 'Direct Apply' : 'Apply'}</span>
+                  <i data-lucide="external-link" class="size-3"></i>
+                </a>
+                <a
+                  href="/opportunity/${opp.id}"
+                  class="px-4 py-2 border-2 border-foreground rounded-xl font-mono text-[10px] font-bold uppercase hover:bg-foreground hover:text-background transition-all text-center"
+                >
+                  Dossier
+                </a>
+              </div>
             </div>
-            <a href="/opportunity/${opp.id}" class="inline-block mt-2 w-full text-center bg-foreground text-background py-2 rounded-xl font-mono text-[10px] font-bold uppercase hover:bg-primary transition-all">Details</a>
-          </div>
-        `).join("");
+          `;
+        }).join("");
 
         modal.classList.remove("hidden");
+        if (window.lucide) window.lucide.createIcons();
       });
 
       document.getElementById("close-modal-btn").addEventListener("click", () => {
@@ -321,7 +492,9 @@
       });
 
       // Initial render
+      renderFilterTabs();
       renderCalendar();
+      renderSidebarChecklist();
     });
   </script>
 </body>

@@ -176,9 +176,51 @@
     </aside>
 
     <!-- Center Section: Swipe Cards & Matches Feed -->
-    <section class="col-span-12 lg:col-span-8 flex flex-col gap-8 lg:pl-4">
+    <section class="col-span-12 lg:col-span-8 flex flex-col gap-6 lg:pl-4">
       
-      <!-- Swipe Stack Container -->
+      <!-- View Mode Tabs: "For You" vs "Discover" -->
+      <div class="flex items-center gap-2 p-1.5 bg-muted/60 border-2 border-foreground rounded-2xl shadow-stamp">
+        <button id="view-tab-foryou" type="button" class="flex-1 py-3 px-4 rounded-xl font-mono text-xs font-bold uppercase transition-all flex items-center justify-center gap-2 bg-foreground text-background shadow-xs">
+          <i data-lucide="sparkles" class="size-4"></i>
+          <span>For You</span>
+        </button>
+        <button id="view-tab-discover" type="button" class="flex-1 py-3 px-4 rounded-xl font-mono text-xs font-bold uppercase transition-all flex items-center justify-center gap-2 text-foreground/70 hover:text-foreground hover:bg-foreground/5">
+          <i data-lucide="compass" class="size-4"></i>
+          <span>Discover</span>
+        </button>
+      </div>
+
+      <!-- Discover Section Controls (active when Discover tab is selected) -->
+      <div id="discover-controls" class="hidden p-5 bg-card border-2 border-foreground rounded-3xl shadow-stamp space-y-4 animate-entry">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-foreground/10">
+          <div>
+            <div class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Catalog Explorer</div>
+            <h3 class="font-display text-2xl uppercase tracking-tight mt-0.5">Discover All Opportunities</h3>
+          </div>
+          <!-- Sort Dropdown -->
+          <div class="flex items-center gap-2 self-start sm:self-auto">
+            <span class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Sort:</span>
+            <select id="discover-sort-select" class="px-3 py-1.5 bg-background border-2 border-foreground rounded-xl font-mono text-xs font-bold uppercase focus:outline-none cursor-pointer">
+              <option value="match">Match Score (High to Low)</option>
+              <option value="quality">Quality Score (High to Low)</option>
+              <option value="deadline">Closing Soonest</option>
+              <option value="newest">Recently Posted</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Quick Filter Tags -->
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="font-mono text-[9px] uppercase tracking-widest text-muted-foreground font-bold mr-1">Quick Filters:</span>
+          <button type="button" class="quick-filter-btn px-2.5 py-1 rounded-lg border border-foreground/20 font-mono text-[10px] uppercase font-bold hover:border-foreground transition-all" data-filter="remote">🌐 Remote Only</button>
+          <button type="button" class="quick-filter-btn px-2.5 py-1 rounded-lg border border-foreground/20 font-mono text-[10px] uppercase font-bold hover:border-foreground transition-all" data-filter="verified">✓ Verified Only</button>
+          <button type="button" class="quick-filter-btn px-2.5 py-1 rounded-lg border border-foreground/20 font-mono text-[10px] uppercase font-bold hover:border-foreground transition-all" data-filter="quality80">🛡️ 80%+ Quality</button>
+          <button type="button" class="quick-filter-btn px-2.5 py-1 rounded-lg border border-foreground/20 font-mono text-[10px] uppercase font-bold hover:border-foreground transition-all" data-filter="urgent">⏰ Closing &lt; 7 Days</button>
+          <button type="button" id="clear-quick-filters-btn" class="hidden text-destructive font-mono text-[10px] uppercase font-bold ml-2 hover:underline">Reset</button>
+        </div>
+      </div>
+
+      <!-- Swipe Stack Container (Shown in For You mode) -->
       <div id="swipe-stack-section" class="select-none flex flex-col w-full">
         <!-- Header row of Swipe Stack -->
         <div class="flex items-center justify-between mb-3">
@@ -217,7 +259,7 @@
             <i data-lucide="x" class="size-6"></i>
           </button>
           <div class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-            ← pass · save →
+            ← pass · interested →
           </div>
           <button
             type="button"
@@ -234,8 +276,8 @@
       <div>
         <div class="flex items-end justify-between mb-3">
           <div>
-            <div class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">All matches · ranked for you</div>
-            <h2 class="font-display text-3xl uppercase tracking-tight leading-none mt-1">The full feed</h2>
+            <div id="feed-header-subtitle" class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">All matches · ranked for you</div>
+            <h2 id="feed-header-title" class="font-display text-3xl uppercase tracking-tight leading-none mt-1">The full feed</h2>
           </div>
         </div>
         <div id="feed-list" class="flex flex-col gap-5">
@@ -393,6 +435,7 @@
 
           renderSwipeStack();
           renderFeedList();
+          setViewMode(activeViewMode);
 
           const loadMoreBtn = document.getElementById("load-more-btn");
           if ((initData.opportunities || []).length === 50) {
@@ -600,14 +643,30 @@
         }
 
         // Render Current Card on top
-        // Use server-computed matchScore (0-100) — server already sorted descending by it
         const currentScore = (current.matchScore !== undefined)
           ? current.matchScore
           : getMatchScore(profileData.profile, current.tags || []);
         const currentCategoryColor = categoryColors[current.category] || "bg-foreground text-background";
-        const currentTagsHtml = (current.tags || []).slice(0, 4).map(t => `
-          <span class="px-2 py-0.5 border border-foreground/15 rounded-full font-mono text-[10px] uppercase">${t}</span>
-        `).join("");
+        const currentQuality = computeQualityScoreClient(current);
+        const currentSource = formatOpportunitySource(current.source);
+        const currentDl = typeof getDeadlineInfo === "function" ? getDeadlineInfo(current.deadline) : { timeRemaining: "Rolling", badgeClass: "bg-muted text-muted-foreground" };
+        const currentElig = current.eligibility?.status || (current.isEligible === false ? "FAIL" : "PASS");
+        const currentEligClass = currentElig === "PASS"
+          ? "bg-emerald-500/20 text-emerald-800 dark:text-emerald-300"
+          : currentElig === "FAIL"
+          ? "bg-red-500/20 text-red-800 dark:text-red-300"
+          : "bg-amber-500/20 text-amber-800 dark:text-amber-300";
+
+        // Highlight matched skills
+        const userSkills = (Array.isArray(profileData.profile?.skills) ? profileData.profile.skills : []).map(s => String(s).toLowerCase().trim());
+        const currentTagsHtml = (current.tags || []).slice(0, 5).map(t => {
+          const isMatched = userSkills.some(s => s === t.toLowerCase() || s.includes(t.toLowerCase()) || t.toLowerCase().includes(s));
+          return `
+            <span class="px-2 py-0.5 rounded-full font-mono text-[9px] uppercase ${isMatched ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 font-bold' : 'border border-foreground/15 text-foreground/75'}">
+              ${isMatched ? '✓ ' : ''}${t}
+            </span>
+          `;
+        }).join("");
 
         const whyCurrent = getWhyThisMatches(current, profileData.profile, {
           saved: profileData.saved,
@@ -622,9 +681,21 @@
         currentEl.setAttribute("id", "active-swipe-card");
 
         currentEl.innerHTML = `
-          <div class="shrink-0 px-5 py-2 ${currentCategoryColor} font-mono text-[10px] font-bold uppercase tracking-wider">
-            ${current.category} · ${current.organization} ${current.verified ? "✓" : ""}
+          <!-- Card Header Banner with Source, Quality & Category -->
+          <div class="shrink-0 px-5 py-2.5 ${currentCategoryColor} font-mono text-[10px] font-bold uppercase tracking-wider flex items-center justify-between gap-2 flex-wrap">
+            <div class="flex items-center gap-2">
+              <span>${current.category}</span>
+              <span>·</span>
+              <span class="truncate max-w-[120px]">${current.organization}</span>
+              ${current.verified ? '<span class="px-1.5 py-0.2 bg-white/20 rounded text-[8px]">✓ Verified</span>' : ''}
+            </div>
+            <div class="flex items-center gap-1.5 text-[8px] font-mono">
+              <span class="px-2 py-0.5 rounded bg-black/15 text-current">📡 ${currentSource}</span>
+              <span class="px-2 py-0.5 rounded bg-black/15 text-current">🛡️ ${currentQuality}% Quality</span>
+              <span class="px-2 py-0.5 rounded ${currentEligClass}">✓ ${currentElig}</span>
+            </div>
           </div>
+
           <div class="p-5 md:p-6 flex-1 flex flex-col min-h-0 relative overflow-y-auto">
             <!-- Overlay stamps -->
             <div id="stamp-interested" class="absolute top-6 left-6 px-3 py-1 border-4 border-primary text-primary font-display text-3xl uppercase rotate-[-12deg] rounded-lg opacity-0 pointer-events-none transition-opacity duration-100 z-20">
@@ -639,37 +710,34 @@
                 <h3 class="font-display text-2xl md:text-3xl uppercase tracking-tight leading-[0.95] text-balance">
                   ${current.title}
                 </h3>
+                <div class="flex items-center gap-2 mt-1.5 font-mono text-[10px] uppercase text-muted-foreground">
+                  <span>${current.organization}</span>
+                  <span>·</span>
+                  <span class="inline-flex items-center gap-1"><i data-lucide="map-pin" class="size-3"></i> ${current.location}</span>
+                  ${current.work_mode ? `<span>·</span><span class="px-1.5 py-0.2 border rounded text-[9px] font-bold">${current.work_mode}</span>` : ''}
+                </div>
               </div>
               ${renderMatchPie(currentScore, 70, true)}
             </div>
 
-            <p class="text-xs text-foreground/75 mb-2 line-clamp-2">${current.description}</p>
+            <p class="text-xs text-foreground/75 my-2 line-clamp-2">${current.description}</p>
 
             <!-- Authentic Why this matches section -->
             ${whyCurrentHtml}
 
-            <div class="mt-auto pt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span class="inline-flex items-center gap-1.5">
-                <i data-lucide="map-pin" class="size-3.5"></i>
-                ${current.location}
-              </span>
-              ${current.work_mode ? `
-                <span class="inline-flex items-center gap-1.5 font-mono uppercase text-[10px] border border-foreground/20 px-2 py-0.5 rounded-full">
-                  ${current.work_mode}
-                </span>
-              ` : ""}
-              <div class="flex flex-wrap gap-1">
-                ${currentTagsHtml}
-              </div>
+            <!-- Skills Row -->
+            <div class="mt-auto pt-3 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <span class="font-mono text-[9px] uppercase tracking-wider font-bold">Skills:</span>
+              ${currentTagsHtml}
             </div>
 
-            <div class="mt-2.5 flex items-center justify-between border-t border-foreground/5 pt-2.5">
-              <a href="/opportunity/${current.id}" class="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-foreground hover:text-primary transition-colors">
-                Tap for full details <i data-lucide="arrow-right" class="size-3.5"></i>
+            <div class="mt-2.5 flex items-center justify-between border-t border-foreground/10 pt-2.5">
+              <a href="/opportunity/${current.id}" class="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-foreground hover:text-primary transition-colors">
+                Tap for full details <i data-lucide="arrow-right" class="size-3"></i>
               </a>
-              <div class="font-mono text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1">
-                <i data-lucide="clock" class="size-3"></i>
-                <span>${getCountdownTimeLeft(current.deadline, true)}</span>
+              <div class="font-mono text-[10px] uppercase font-bold text-muted-foreground flex items-center gap-1">
+                <i data-lucide="clock" class="size-3 text-primary"></i>
+                <span>${currentDl.timeRemaining}</span>
               </div>
             </div>
           </div>
@@ -882,201 +950,146 @@
           return;
         }
 
-        feedList.innerHTML = feedOpps.map((opp, index) => {
-          // Use server-computed matchScore when available, fall back to client
-          const score = (opp.matchScore !== undefined)
-            ? opp.matchScore
-            : getMatchScore(profileData.profile, opp.tags || []);
-          const isSaved = profileData.saved.includes(opp.id);
-          const colorClass = categoryColors[opp.category] || "bg-foreground text-background";
+        // Active view mode, quick filter and sort
+        let displayOpps = [...feedOpps];
 
-          const now = Date.now();
-          const startsIn = opp.application_start_date ? Math.floor((new Date(opp.application_start_date).getTime() - now) / (1000 * 3600 * 24)) : -1;
-          const daysLeft = Math.floor((new Date(opp.deadline).getTime() - now) / (1000 * 3600 * 24));
-          const urgent = startsIn <= 0 && daysLeft <= 7;
-          const isFuture = startsIn > 0;
-
-          const whyOpp = getWhyThisMatches(opp, profileData.profile, {
-            saved: profileData.saved,
-            interested: profileData.interested,
-            passed: profileData.passed,
-            applied: profileData.applied
+        // Apply Discover quick filters
+        if (activeQuickFilter === "remote") {
+          displayOpps = displayOpps.filter(o => {
+            const m = String(o.work_mode || "").toLowerCase();
+            const l = String(o.location || "").toLowerCase();
+            return m === "remote" || l.includes("remote") || l.includes("virtual");
           });
-          const whyOppHtml = renderWhyThisMatchesSection(whyOpp, { compact: false });
+        } else if (activeQuickFilter === "verified") {
+          displayOpps = displayOpps.filter(o => o.verified === true);
+        } else if (activeQuickFilter === "quality80") {
+          displayOpps = displayOpps.filter(o => computeQualityScoreClient(o) >= 80);
+        } else if (activeQuickFilter === "urgent") {
+          displayOpps = displayOpps.filter(o => {
+            if (!o.deadline) return false;
+            const diff = (new Date(o.deadline).getTime() - Date.now()) / (1000 * 3600 * 24);
+            return diff >= 0 && diff <= 7;
+          });
+        }
 
-          const tagsHtml = (opp.tags || []).slice(0, 4).map(t => {
-            const isSkillMatched = (opp.matchedSkills || []).some(s => s.toLowerCase() === t.toLowerCase());
-            return `
-              <span class="px-2 py-0.5 border ${isSkillMatched ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-bold' : 'border-foreground/15'} rounded-full font-mono text-[10px] uppercase">
-                ${isSkillMatched ? '✓ ' : ''}${t}
-              </span>
-            `;
-          }).join("");
+        // Apply Sorting
+        if (activeSort === "quality") {
+          displayOpps.sort((a, b) => computeQualityScoreClient(b) - computeQualityScoreClient(a));
+        } else if (activeSort === "deadline") {
+          displayOpps.sort((a, b) => new Date(a.deadline || "9999-12-31") - new Date(b.deadline || "9999-12-31"));
+        } else if (activeSort === "newest") {
+          displayOpps.sort((a, b) => new Date(b.posted_at || b.created_at || 0) - new Date(a.posted_at || a.created_at || 0));
+        } else {
+          // Default: match score descending
+          displayOpps.sort((a, b) => {
+            const sa = a.matchScore !== undefined ? a.matchScore : getMatchScore(profileData.profile, a.tags || []);
+            const sb = b.matchScore !== undefined ? b.matchScore : getMatchScore(profileData.profile, b.tags || []);
+            return sb - sa;
+          });
+        }
 
-          return `
-            <article
-              class="animate-entry bg-card border-2 border-foreground rounded-[28px] shadow-stamp hover:shadow-stamp-lg hover:-translate-x-1 hover:-translate-y-1 transition-all duration-200"
-              style="animation-delay: ${index * 60}ms"
-            >
-              <div class="p-6 md:p-8 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6">
-                <div class="min-w-0">
-                  <div class="flex flex-wrap items-center gap-2 mb-4">
-                    <span class="px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider ${colorClass}">
-                      ${opp.category}
-                    </span>
-                    <span class="font-mono text-[10px] text-muted-foreground uppercase tracking-widest">
-                      · Posted ${formatPostedTime(opp.posted_at || opp.created_at)}
-                    </span>
-                    ${opp.eligibility?.status === "FAIL" ? `
-                      <span class="px-2 py-0.5 bg-destructive/15 text-destructive font-mono text-[10px] font-bold uppercase rounded-sm border border-destructive/30">
-                        ✕ Ineligible
-                      </span>
-                    ` : opp.eligibility?.status === "PASS" ? `
-                      <span class="px-2 py-0.5 bg-emerald-500/15 text-emerald-600 font-mono text-[10px] font-bold uppercase rounded-sm border border-emerald-500/30">
-                        ✓ Eligible
-                      </span>
-                    ` : ""}
-                    ${opp.featured ? `
-                      <span class="px-2 py-0.5 bg-lime text-foreground font-mono text-[10px] font-bold uppercase">
-                        ★ Featured
-                      </span>
-                    ` : ""}
-                    ${opp.verified ? `
-                      <span class="px-2 py-0.5 bg-blue-500 text-white font-mono text-[10px] font-bold uppercase rounded-sm">
-                        ✓ Verified
-                      </span>
-                    ` : ""}
-                  </div>
-
-                  <a href="/opportunity/${opp.id}" class="block group">
-                    <h3 class="font-display text-3xl md:text-4xl uppercase tracking-tight leading-[0.95] mb-3 group-hover:text-primary transition-colors text-balance">
-                      ${opp.title}
-                    </h3>
-                  </a>
-                  <p class="font-mono text-xs uppercase tracking-wider text-muted-foreground mb-3">
-                    ${opp.organization}
-                  </p>
-                  <p class="text-sm leading-relaxed text-foreground/70 max-w-prose line-clamp-2">
-                    ${opp.description}
-                  </p>
-
-                  <div class="flex flex-wrap items-center gap-4 mt-5 text-xs text-muted-foreground">
-                    <span class="inline-flex items-center gap-1.5">
-                      <i data-lucide="map-pin" class="size-3.5"></i>
-                      ${opp.location}
-                    </span>
-                    ${opp.work_mode ? `
-                      <span class="inline-flex items-center gap-1.5 font-mono uppercase text-[10px] border border-foreground/20 px-2 py-0.5 rounded-full">
-                        ${opp.work_mode}
-                      </span>
-                    ` : ""}
-                    ${opp.participants ? `
-                      <span class="inline-flex items-center gap-1.5">
-                        <i data-lucide="users" class="size-3.5"></i>
-                        ${opp.participants.toLocaleString()} applied
-                      </span>
-                    ` : ""}
-                    <div class="flex flex-wrap gap-1.5">
-                      ${tagsHtml}
-                    </div>
-                  </div>
-
-                  <!-- Explainable Why this matches section -->
-                  ${whyOppHtml}
-                </div>
-
-                <div class="flex md:flex-col md:items-end justify-between md:w-44 gap-3 md:border-l-2 md:border-dashed md:border-foreground/20 md:pl-6">
-                  <div class="text-left md:text-right">
-                    <div class="font-mono text-[10px] text-muted-foreground uppercase tracking-widest">
-                      ${isFuture ? "Opens in" : urgent ? "Closing" : "Deadline"}
-                    </div>
-                    <div class="font-display text-xl md:text-2xl uppercase leading-none mt-1 ${urgent ? 'text-primary' : ''}">
-                      ${getCountdownTimeLeft(opp.deadline, false)}
-                    </div>
-                    ${opp.prize_amount ? `
-                      <div class="font-mono text-[10px] text-muted-foreground uppercase tracking-widest mt-2">
-                        ${opp.prize_amount}
-                      </div>
-                    ` : ""}
-                  </div>
-                  <div class="md:self-end">
-                    ${renderMatchPie(score, 84, true)}
-                  </div>
-
-                    <div class="flex md:flex-col gap-2 md:w-full">
-                      <a
-                        href="/opportunity/${opp.id}"
-                        class="flex-1 text-center py-2.5 bg-foreground text-background font-mono text-[11px] font-bold uppercase rounded-lg hover:bg-primary hover:text-primary-foreground transition-colors flex items-center justify-center"
-                      >
-                        View
-                      </a>
-                      <button
-                        type="button"
-                        class="save-toggle-btn flex items-center justify-center gap-2 shrink-0 py-2.5 px-4 rounded-lg border-2 border-foreground font-mono text-[11px] font-bold uppercase transition-colors ${isSaved ? 'bg-secondary text-secondary-foreground' : 'bg-card hover:bg-accent'}"
-                        data-id="${opp.id}"
-                      >
-                        ${isSaved ? `
-                          <i data-lucide="bookmark-check" class="size-4"></i> Saved
-                        ` : `
-                          <i data-lucide="bookmark" class="size-4"></i> Save
-                        `}
-                      </button>
-                      <button
-                        type="button"
-                        class="compare-toggle-btn flex items-center justify-center gap-1.5 shrink-0 py-2.5 px-3 rounded-lg border border-foreground/30 font-mono text-[10px] font-bold uppercase hover:bg-accent transition-colors"
-                        data-id="${opp.id}"
-                        title="Compare with another opportunity"
-                      >
-                        <i data-lucide="split" class="size-3.5"></i>
-                        <span>Compare</span>
-                      </button>
-                    </div>
-                </div>
-              </div>
-            </article>
-          `;
+        feedList.innerHTML = displayOpps.map(opp => {
+          return renderOpportunityCard(opp, profileData, {
+            isSaved: profileData.saved.includes(opp.id),
+            isInterested: profileData.interested.includes(opp.id),
+            isApplied: profileData.applied.includes(opp.id)
+          });
         }).join("");
 
         if (window.lucide) window.lucide.createIcons();
-      }
 
-      // Actions delegator in feed matches list
-      const feedList = document.getElementById("feed-list");
-      feedList.addEventListener("click", async (e) => {
-        const saveBtn = e.target.closest(".save-toggle-btn");
-        if (!saveBtn) return;
-
-        const id = saveBtn.getAttribute("data-id");
-        try {
-          const res = await fetch("/api/user/saved/toggle", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            
-            // Track the save behavior
-            const savedOpp = feedOpps.find(o => String(o.id) === String(id)) ||
-                             (swipeQueue || []).find(o => String(o.id) === String(id));
-            if (savedOpp) trackBehavior(data.saved ? "saved" : "viewed", savedOpp);
-
-            // Toggle local tracking
-            if (data.saved) {
+        // Attach listeners for save, interested, apply, and why toggle
+        attachOpportunityCardListeners(feedList, {
+          onAfterSave: async (id, isSaved) => {
+            if (isSaved) {
               if (!profileData.saved.includes(id)) profileData.saved.push(id);
+              const savedOpp = feedOpps.find(o => String(o.id) === String(id));
+              if (savedOpp) trackBehavior("saved", savedOpp);
             } else {
               profileData.saved = profileData.saved.filter(s => s !== id);
             }
-
-            // Sync with swipe stack (remove saved item from feed lists)
-            feedOpps = feedOpps.filter(o => o.id !== id);
-            renderSwipeStack();
-            renderFeedList();
+            updateFeedStatsIndicator();
             await loadWatchlistWidget();
+          },
+          onAfterInterested: (id, isInterested) => {
+            if (isInterested) {
+              if (!profileData.interested.includes(id)) profileData.interested.push(id);
+              const intOpp = feedOpps.find(o => String(o.id) === String(id));
+              if (intOpp) trackBehavior("interested", intOpp);
+            } else {
+              profileData.interested = profileData.interested.filter(s => s !== id);
+            }
+            updateFeedStatsIndicator();
           }
-        } catch (err) {
-          console.error("Failed to save:", err);
+        });
+      }
+
+      // View Mode State
+      let activeViewMode = new URLSearchParams(window.location.search).get("tab") === "discover" ? "discover" : "foryou";
+      let activeQuickFilter = null;
+      let activeSort = "match";
+
+      function setViewMode(mode) {
+        activeViewMode = mode;
+        const tabForYou = document.getElementById("view-tab-foryou");
+        const tabDiscover = document.getElementById("view-tab-discover");
+        const swipeSection = document.getElementById("swipe-stack-section");
+        const discoverControls = document.getElementById("discover-controls");
+        const feedTitle = document.getElementById("feed-header-title");
+        const feedSubtitle = document.getElementById("feed-header-subtitle");
+
+        if (mode === "discover") {
+          tabDiscover.className = "flex-1 py-3 px-4 rounded-xl font-mono text-xs font-bold uppercase transition-all flex items-center justify-center gap-2 bg-foreground text-background shadow-xs";
+          tabForYou.className = "flex-1 py-3 px-4 rounded-xl font-mono text-xs font-bold uppercase transition-all flex items-center justify-center gap-2 text-foreground/70 hover:text-foreground hover:bg-foreground/5";
+          swipeSection?.classList.add("hidden");
+          discoverControls?.classList.remove("hidden");
+          if (feedTitle) feedTitle.textContent = "Discover Opportunities";
+          if (feedSubtitle) feedSubtitle.textContent = "Explore all listings · verified data & direct applications";
+        } else {
+          tabForYou.className = "flex-1 py-3 px-4 rounded-xl font-mono text-xs font-bold uppercase transition-all flex items-center justify-center gap-2 bg-foreground text-background shadow-xs";
+          tabDiscover.className = "flex-1 py-3 px-4 rounded-xl font-mono text-xs font-bold uppercase transition-all flex items-center justify-center gap-2 text-foreground/70 hover:text-foreground hover:bg-foreground/5";
+          swipeSection?.classList.remove("hidden");
+          discoverControls?.classList.add("hidden");
+          if (feedTitle) feedTitle.textContent = "The full feed";
+          if (feedSubtitle) feedSubtitle.textContent = "All matches · ranked for you";
         }
+        renderFeedList();
+        if (window.lucide) window.lucide.createIcons();
+      }
+
+      // Wire View Tabs
+      document.getElementById("view-tab-foryou")?.addEventListener("click", () => setViewMode("foryou"));
+      document.getElementById("view-tab-discover")?.addEventListener("click", () => setViewMode("discover"));
+
+      // Wire Sort Select
+      document.getElementById("discover-sort-select")?.addEventListener("change", (e) => {
+        activeSort = e.target.value;
+        renderFeedList();
+      });
+
+      // Wire Quick Filters
+      document.querySelectorAll(".quick-filter-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const filter = btn.dataset.filter;
+          if (activeQuickFilter === filter) {
+            activeQuickFilter = null;
+            btn.classList.remove("bg-foreground", "text-background");
+            document.getElementById("clear-quick-filters-btn")?.classList.add("hidden");
+          } else {
+            document.querySelectorAll(".quick-filter-btn").forEach(b => b.classList.remove("bg-foreground", "text-background"));
+            activeQuickFilter = filter;
+            btn.classList.add("bg-foreground", "text-background");
+            document.getElementById("clear-quick-filters-btn")?.classList.remove("hidden");
+          }
+          renderFeedList();
+        });
+      });
+
+      document.getElementById("clear-quick-filters-btn")?.addEventListener("click", () => {
+        activeQuickFilter = null;
+        document.querySelectorAll(".quick-filter-btn").forEach(b => b.classList.remove("bg-foreground", "text-background"));
+        document.getElementById("clear-quick-filters-btn")?.classList.add("hidden");
+        renderFeedList();
       });
 
       // Load Watchlist widget

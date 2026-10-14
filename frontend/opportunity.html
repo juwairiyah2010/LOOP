@@ -157,6 +157,8 @@
         const colorClass = categoryColors[opp.category] || "bg-foreground text-background";
         const isSaved = profileData.saved.includes(opp.id);
         const isApplied = profileData.applied.includes(opp.id);
+        const quality = typeof computeQualityScoreClient === "function" ? computeQualityScoreClient(opp) : 85;
+        const sourceName = typeof formatOpportunitySource === "function" ? formatOpportunitySource(opp.source) : (opp.source || "LOOP Verified");
 
         let eligibilityBadge = "";
         if (eligibility) {
@@ -176,6 +178,12 @@
               <div class="flex items-center gap-2 mb-3 flex-wrap">
                 <span class="px-2.5 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase tracking-tight ${colorClass}">
                   ${opp.category}
+                </span>
+                <span class="px-2.5 py-0.5 bg-background border border-foreground/15 rounded-full font-mono text-[9px] font-semibold text-foreground/80 uppercase flex items-center gap-1">
+                  <i data-lucide="database" class="size-2.5 text-primary"></i> ${sourceName}
+                </span>
+                <span class="px-2.5 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase border border-blue-500/30 text-blue-700 dark:text-blue-300 flex items-center gap-1">
+                  <i data-lucide="shield" class="size-2.5"></i> ${quality}% Quality
                 </span>
                 <span class="px-2.5 py-0.5 bg-muted rounded-full font-mono text-[9px] text-muted-foreground uppercase">
                   ${opp.location}
@@ -202,23 +210,31 @@
           </div>
 
           <!-- Attributes Grid -->
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-muted/40 p-4 border-2 border-foreground/10 rounded-2xl">
+          <div class="grid grid-cols-2 md:grid-cols-6 gap-3 bg-muted/40 p-4 border-2 border-foreground/10 rounded-2xl">
             <div>
               <div class="font-mono text-[9px] text-muted-foreground uppercase">DAYS REMAINING</div>
               <div class="font-bold text-sm uppercase mt-0.5">${daysLeft}</div>
+            </div>
+            <div>
+              <div class="font-mono text-[9px] text-muted-foreground uppercase">SOURCE</div>
+              <div class="font-bold text-sm uppercase mt-0.5 truncate">${sourceName}</div>
+            </div>
+            <div>
+              <div class="font-mono text-[9px] text-muted-foreground uppercase">DATA QUALITY</div>
+              <div class="font-bold text-sm uppercase mt-0.5 text-blue-600">${quality}%</div>
+            </div>
+            <div>
+              <div class="font-mono text-[9px] text-muted-foreground uppercase">WORK MODE</div>
+              <div class="font-bold text-sm uppercase mt-0.5">${opp.work_mode || "Onsite"}</div>
             </div>
             <div>
               <div class="font-mono text-[9px] text-muted-foreground uppercase">PRIZE / REWARD</div>
               <div class="font-bold text-sm uppercase mt-0.5">${opp.prize_amount || "N/A"}</div>
             </div>
             <div>
-              <div class="font-mono text-[9px] text-muted-foreground uppercase">EST. PARTICIPANTS</div>
-              <div class="font-bold text-sm uppercase mt-0.5">${opp.participants || "N/A"}</div>
-            </div>
-            <div>
               <div class="font-mono text-[9px] text-muted-foreground uppercase">VERIFIED STATUS</div>
               <div class="font-bold text-sm uppercase mt-0.5 flex items-center gap-1 text-primary">
-                <i data-lucide="check-circle-2" class="size-4 shrink-0"></i> Verified
+                <i data-lucide="check-circle-2" class="size-4 shrink-0"></i> ${opp.verified ? 'Verified' : 'Active'}
               </div>
             </div>
           </div>

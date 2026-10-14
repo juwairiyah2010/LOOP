@@ -1450,7 +1450,12 @@ app.post("/api/opportunities", async (req, res) => {
         application_start_date: 1,
         posted_at: 1,
         matchScore: 1,
-        eligibility: 1
+        eligibility: 1,
+        source: 1,
+        source_id: 1,
+        source_url: 1,
+        quality_score: 1,
+        qualityScore: 1
       }
     });
 
