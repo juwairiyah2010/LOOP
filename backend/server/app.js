@@ -16,6 +16,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import { ObjectId } from "mongodb";
 
 
@@ -49,6 +50,37 @@ function extractStringIds(list = []) {
   }).filter(Boolean);
 }
 
+// Environment variable validation & health check
+function verifyEnvironment() {
+  if (!process.env.JWT_SECRET) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("FATAL: JWT_SECRET environment variable is missing in production!");
+      process.exit(1);
+    } else {
+      console.warn("WARNING: JWT_SECRET not set — running with dev-fallback secret.");
+    }
+  }
+
+  if (process.env.NODE_ENV === "production" && (!process.env.ADMIN_API_KEY || process.env.ADMIN_API_KEY === "loop_admin_secret_key_2026")) {
+    console.warn("SECURITY WARNING: ADMIN_API_KEY is not configured or using default in production!");
+  }
+
+  if (process.env.GEMINI_API_KEY) {
+    console.log("✓ GEMINI_API_KEY detected — Gemini AI provider active.");
+  } else {
+    console.log("ℹ GEMINI_API_KEY not set — using Mock AI provider.");
+  }
+}
+verifyEnvironment();
+
+// Constant-time string comparison to prevent timing attacks on secret keys
+function safeTimingCompare(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const hashA = crypto.createHash("sha256").update(a).digest();
+  const hashB = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
 const JWT_SECRET = (() => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -76,10 +108,104 @@ const app = express();
 // ── Performance: gzip all responses ──────────────────────────────────────────
 app.use(compression());
 
-// CORS — explicit origin allowlist only.
-// Set ALLOWED_ORIGINS in your environment as a comma-separated list of full origins.
-// Example: ALLOWED_ORIGINS=https://loop-loveoppor.vercel.app,https://www.yourdomain.com
-// Leave empty if the frontend is served from the same origin (Vercel monorepo).
+// ── Security Headers ─────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+  }
+  next();
+});
+
+// ── In-Memory Sliding-Window Rate Limiter ────────────────────────────────────
+class MemoryRateLimiter {
+  constructor({ windowMs = 60_000, max = 100, message = "Too many requests, please try again later." } = {}) {
+    this.windowMs = windowMs;
+    this.max = max;
+    this.message = message;
+    this.hits = new Map();
+    
+    // Auto-cleanup stale entries
+    this.cleanupInterval = setInterval(() => {
+      const threshold = Date.now() - this.windowMs;
+      for (const [key, timestamps] of this.hits.entries()) {
+        const filtered = timestamps.filter(t => t > threshold);
+        if (filtered.length === 0) {
+          this.hits.delete(key);
+        } else {
+          this.hits.set(key, filtered);
+        }
+      }
+    }, 60_000);
+    if (this.cleanupInterval.unref) this.cleanupInterval.unref();
+  }
+
+  middleware() {
+    return (req, res, next) => {
+      const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket?.remoteAddress || "127.0.0.1";
+      const userKey = req.user?.userId || req.user?.name || ip;
+      const key = `${ip}:${userKey}`;
+      const now = Date.now();
+      const threshold = now - this.windowMs;
+
+      let timestamps = this.hits.get(key) || [];
+      timestamps = timestamps.filter(t => t > threshold);
+
+      if (timestamps.length >= this.max) {
+        res.setHeader("Retry-After", Math.ceil(this.windowMs / 1000));
+        return res.status(429).json({
+          error: this.message,
+          retryAfterSeconds: Math.ceil(this.windowMs / 1000)
+        });
+      }
+
+      timestamps.push(now);
+      this.hits.set(key, timestamps);
+
+      res.setHeader("X-RateLimit-Limit", this.max);
+      res.setHeader("X-RateLimit-Remaining", Math.max(0, this.max - timestamps.length));
+      res.setHeader("X-RateLimit-Reset", Math.ceil((now + this.windowMs) / 1000));
+
+      next();
+    };
+  }
+}
+
+const authRateLimiter = new MemoryRateLimiter({
+  windowMs: 60_000,
+  max: 20,
+  message: "Too many authentication attempts. Please wait a minute before retrying."
+}).middleware();
+
+const aiRateLimiter = new MemoryRateLimiter({
+  windowMs: 60_000,
+  max: 30,
+  message: "AI rate limit reached. Please wait a moment before trying again."
+}).middleware();
+
+const searchRateLimiter = new MemoryRateLimiter({
+  windowMs: 60_000,
+  max: 45,
+  message: "Search rate limit exceeded. Please wait a moment."
+}).middleware();
+
+const adminRateLimiter = new MemoryRateLimiter({
+  windowMs: 60_000,
+  max: 30,
+  message: "Admin action rate limit reached."
+}).middleware();
+
+const globalApiRateLimiter = new MemoryRateLimiter({
+  windowMs: 60_000,
+  max: 250,
+  message: "Too many requests to LOOP API. Please slow down."
+}).middleware();
+
+// CORS — explicit origin allowlist only with preflight caching
 const _ALLOWED_ORIGINS_ENV = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((o) => o.trim())
@@ -101,9 +227,7 @@ const _VERCEL_ORIGINS = [
 
 app.use(cors({
   origin(origin, callback) {
-    // Requests with no Origin header (same-origin navigation, server-to-server, curl) are allowed
     if (!origin) return callback(null, true);
-
     const allowed =
       process.env.NODE_ENV !== "production"
         ? [..._DEV_ORIGINS, ..._ALLOWED_ORIGINS_ENV, ..._VERCEL_ORIGINS]
@@ -112,14 +236,26 @@ app.use(cors({
     if (allowed.includes(origin)) {
       return callback(null, true);
     }
-    // Reject unknown origin: return null, false so no CORS allow headers are emitted
     return callback(null, false);
   },
   credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-admin-key", "x-requested-with"],
+  maxAge: 86400
 }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(cookieParser());
+
+// Apply rate limiting tiers
+app.use("/api", globalApiRateLimiter);
+app.use("/api/auth/authenticate", authRateLimiter);
+app.use("/api/auth/reset", authRateLimiter);
+app.use("/api/ai", aiRateLimiter);
+app.use("/api/gemini", aiRateLimiter);
+app.use("/api/opportunities/search/natural", searchRateLimiter);
+app.use("/api/admin", adminRateLimiter);
+app.use("/api/ingestion", adminRateLimiter);
 
 // ── Performance: cache static assets ─────────────────────────────────────────
 // HTML pages: 10-minute cache (revalidate on stale)
@@ -211,6 +347,7 @@ app.post("/api/auth/authenticate", async (req, res) => {
   }
 
   try {
+    const users = await getUsersCollection();
     const normalizedName = name.trim().toLowerCase();
     const isAdminLogin = (normalizedName === "admin" || normalizedName === "admin@loop.com") && password === "admin123";
 
@@ -449,12 +586,12 @@ async function getDbUser(userIdStr) {
 
 // Admin Authorization Middleware (Protects admin & ingestion endpoints)
 async function requireAdmin(req, res, next) {
-  // 1. Admin API key check (Authorization header or x-admin-key)
+  // 1. Timing-safe Admin API key check (Authorization header or x-admin-key)
   const adminApiKey = process.env.ADMIN_API_KEY || "loop_admin_secret_key_2026";
   const incomingKey = req.headers["x-admin-key"] || 
     (req.headers.authorization && req.headers.authorization.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
 
-  if (incomingKey && incomingKey === adminApiKey) {
+  if (incomingKey && safeTimingCompare(incomingKey, adminApiKey)) {
     req.isAdmin = true;
     req.adminIdentity = "api_key";
     return next();
@@ -783,6 +920,15 @@ app.post("/api/user/profile", requireAuth, async (req, res) => {
       } else if (key === "avatar") {
         if (typeof val !== "string" || val.length > 5_000_000) {
           return res.status(400).json({ error: "Avatar must be under 5MB" });
+        }
+        if (val && !val.startsWith("data:image/") && !/^https?:\/\//i.test(val)) {
+          return res.status(400).json({ error: "Avatar must be a valid image data URI (PNG, JPEG, WebP, GIF, SVG) or HTTP/HTTPS URL" });
+        }
+        if (val.startsWith("data:image/")) {
+          const match = val.match(/^data:image\/(png|jpeg|jpg|webp|gif|svg\+xml);base64,/i);
+          if (!match) {
+            return res.status(400).json({ error: "Avatar image data URI must be PNG, JPEG, WebP, GIF, or SVG base64" });
+          }
         }
       } else if (key === "bio") {
         if (typeof val !== "string" || val.length > 2000) {

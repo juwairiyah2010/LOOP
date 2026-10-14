@@ -1,15 +1,25 @@
 // Common utilities for LOOP website
 
-// Fetch current user auth state
-async function getAuthUser() {
-  try {
-    const res = await fetch("/api/auth/me");
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    console.error("Auth check failed:", err);
-    return null;
-  }
+let _cachedAuthUserPromise = null;
+
+// Fetch current user auth state (deduplicates concurrent inflight calls)
+async function getAuthUser(forceRefresh = false) {
+  if (_cachedAuthUserPromise && !forceRefresh) return _cachedAuthUserPromise;
+  _cachedAuthUserPromise = (async () => {
+    try {
+      const res = await fetch("/api/auth/me");
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (err) {
+      console.error("Auth check failed:", err);
+      return null;
+    }
+  })();
+  return _cachedAuthUserPromise;
+}
+
+function clearAuthCache() {
+  _cachedAuthUserPromise = null;
 }
 
 // Redirect if not logged in
@@ -1303,6 +1313,7 @@ function renderHeader(user) {
     `;
     document.getElementById("logout-btn")?.addEventListener("click", async () => {
       const res = await fetch("/api/auth/logout", { method: "POST" });
+      clearAuthCache();
       if (res.ok) {
         window.location.href = "/";
       }

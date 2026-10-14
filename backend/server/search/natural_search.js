@@ -95,14 +95,15 @@ export async function searchOpportunitiesByNaturalLanguage(query, user = null, o
     throw new Error("Search query must be a non-empty string");
   }
 
-  const cleanQuery = query.trim();
-  const limit = options.limit || 20;
+  // Bound query to prevent DoS via massive input strings
+  const cleanQuery = query.trim().slice(0, 500);
+  const limit = Math.min(Math.max(1, Number(options.limit) || 20), 100);
 
-  // STEP 1: AI converts user request into structured filters
+  // STEP 1: AI converts user request into structured filters (uses 2-hour AI cache for repeated queries)
   // (NOTE: Database is NEVER sent to AI)
   const aiInterpretation = await aiService.parseNaturalLanguageSearch(
     cleanQuery,
-    user?.profile || {}
+    Boolean(options.bypassCache)
   );
 
   const interpretedFilters = aiInterpretation.interpretedFilters || aiInterpretation.interpretedIntent || {};
